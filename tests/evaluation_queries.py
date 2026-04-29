@@ -10,6 +10,14 @@ EVALUATION_CASES = [
         ],
     },
     {
+        "question": "What APIs are mentioned?",
+        "expected_topics": [
+            "FastAPI",
+            "OpenAI APIs",
+            "backend services",
+        ],
+    },
+    {
         "question": "What AI technologies are mentioned?",
         "expected_topics": [
             "LLMs",

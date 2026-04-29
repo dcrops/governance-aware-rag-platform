@@ -45,6 +45,7 @@ class RAGPipeline:
         question: str,
         top_k: int = 5,
         min_score: float | None = None,
+        metadata_filter: dict | None = None
     ) -> RAGResponse:
         """
         Retrieve relevant context and generate a grounded answer to the user question.
@@ -70,11 +71,14 @@ class RAGPipeline:
                 raise ValueError("min_score must be a non-negative number.")
 
         # Retrieve relevant documents
-        search_results = self.retriever.retrieve(
+        retrieval_result = self.retriever.retrieve(
             question,
             top_k=top_k,
             min_score=min_score,
+            metadata_filter=metadata_filter,
         )
+
+        search_results = retrieval_result.search_results
 
         if not search_results:
             fallback_answer = (
@@ -84,6 +88,8 @@ class RAGPipeline:
 
             log = RetrievalLog(
                 question=question,
+                original_query=retrieval_result.original_query,
+                retrieval_query=retrieval_result.retrieval_query,
                 retrieved_chunk_ids=[],
                 scores=[],
                 answer=fallback_answer,
@@ -122,6 +128,8 @@ class RAGPipeline:
 
         log = RetrievalLog(
             question=question,
+            original_query=retrieval_result.original_query,
+            retrieval_query=retrieval_result.retrieval_query,
             retrieved_chunk_ids=[result.id for result in search_results],
             scores=[result.score for result in search_results],
             answer=answer,

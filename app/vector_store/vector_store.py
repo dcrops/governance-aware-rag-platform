@@ -90,7 +90,8 @@ class VectorStore:
     def similarity_search(
         self,
         query_embedding: List[float],
-        top_k: int = 5
+        top_k: int = 5,
+        metadata_filter: dict | None = None,
     ) -> List[SearchResult]:
         """
         Perform a similarity search using the input embedding.
@@ -112,11 +113,16 @@ class VectorStore:
 
         # Perform query with Chroma, requesting distance metric 'l2' or default
         try:
-            response = self._collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["metadatas", "documents", "distances"]
-            )
+            query_kwargs = {
+                "query_embeddings": [query_embedding],
+                "n_results": top_k,
+                "include": ["metadatas", "documents", "distances"],
+            }
+
+            if metadata_filter is not None:
+                query_kwargs["where"] = metadata_filter
+
+            response = self._collection.query(**query_kwargs)
         except Exception as exc:
             raise RuntimeError(f"ChromaDB similarity search failed: {exc}")
 

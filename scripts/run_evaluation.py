@@ -9,6 +9,8 @@ from app.vector_store.vector_store import VectorStore
 from app.retrieval.retriever import Retriever
 from app.orchestration.rag_pipeline import RAGPipeline
 from app.generation.answer_generator import AnswerGenerator
+from app.telemetry.telemetry_logger import TelemetryLogger
+from app.query_processing.query_rewriter import QueryRewriter
 
 
 def main():
@@ -54,7 +56,9 @@ def main():
     print(f"   -> Upserted {len(records)} records")
 
     print("7. Initializing Retriever...")
-    retriever = Retriever(embedding_client=embed_client, vector_store=vector_store)
+
+    query_rewriter = QueryRewriter()
+    retriever = Retriever(embedding_client=embed_client, vector_store=vector_store, query_rewriter=query_rewriter,)
 
     answer_generator = AnswerGenerator()
 
@@ -64,6 +68,8 @@ def main():
     )
 
     print("8. Running evaluation queries...")
+
+    telemetry_logger = TelemetryLogger()
 
     for idx, case in enumerate(EVALUATION_CASES, start=1):
         question = case["question"]
@@ -80,6 +86,7 @@ def main():
             question,
             top_k=5,
             min_score=0.35,
+            metadata_filter={"file_name": "sample.txt"},
         )
 
         print("\nAnswer:")
@@ -95,6 +102,9 @@ def main():
             print("\nTelemetry:")
             print(f"Retrieved IDs: {response.log.retrieved_chunk_ids}")
             print(f"Scores: {[round(score, 3) for score in response.log.scores]}")
+
+        if response.log:
+            telemetry_logger.log_retrieval(response.log)
 
 if __name__ == "__main__":
     main()

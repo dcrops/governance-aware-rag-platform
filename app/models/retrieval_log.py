@@ -11,3 +11,5 @@ class RetrievalLog(BaseModel):
     scores: List[float]
     answer: str
     timestamp: str
+    original_query: str
+    retrieval_query: str
