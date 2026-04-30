@@ -11,7 +11,7 @@ def chunk_document(doc: Document) -> list[Chunk]:
     Returns:
         List of Chunk objects.
     """
-    chunk_size = 1000
+    chunk_size = 1500
     overlap = 150
     step = chunk_size - overlap
 

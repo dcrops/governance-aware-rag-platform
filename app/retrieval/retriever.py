@@ -9,7 +9,7 @@ class Retriever:
     Uses an embedding client and a vector store to embed user queries and find similar document chunks.
     """
 
-    def __init__(self, embedding_client: EmbeddingClient, vector_store: VectorStore, query_rewriter=None,) -> None:
+    def __init__(self, embedding_client: EmbeddingClient, vector_store: VectorStore, query_rewriter=None, reranker=None) -> None:
         """
         Initialize the Retriever.
 
@@ -20,6 +20,7 @@ class Retriever:
         self.embedding_client = embedding_client
         self.vector_store = vector_store
         self.query_rewriter = query_rewriter
+        self.reranker = reranker
 
     def retrieve(self, query: str, top_k: int = 5, min_score: float | None = None, metadata_filter: dict | None = None) -> RetrievalResult:
         """
@@ -57,6 +58,12 @@ class Retriever:
             top_k=top_k,
             metadata_filter=metadata_filter,
         )
+
+        if self.reranker is not None:
+            results = self.reranker.rerank(
+                query=query_for_retrieval,
+                search_results=results,
+            )
 
         if min_score is not None:
             results = [result for result in results if result.score >= min_score]

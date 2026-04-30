@@ -1,8 +1,7 @@
 from tests.evaluation_queries import EVALUATION_CASES
+
 from app.ingestion.ingest import ingest_document
 from app.chunking.chunker import chunk_document
-
-# Import EmbeddingClient, VectorRecord, VectorStore, and Retriever
 from app.embeddings.embeddings import EmbeddingClient
 from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
@@ -10,11 +9,29 @@ from app.retrieval.retriever import Retriever
 from app.orchestration.rag_pipeline import RAGPipeline
 from app.generation.answer_generator import AnswerGenerator
 from app.telemetry.telemetry_logger import TelemetryLogger
-from app.query_processing.query_rewriter import QueryRewriter
+
+
+REWRITE_STRATEGY = "rule"  # options: "none", "rule", "llm"
+
+
+def build_query_rewriter(strategy: str):
+    if strategy == "none":
+        return None
+
+    if strategy == "rule":
+        from app.query_processing.query_rewriter import QueryRewriter
+
+        return QueryRewriter()
+
+    if strategy == "llm":
+        from app.query_processing.llm_query_rewriter import LLMQueryRewriter
+
+        return LLMQueryRewriter()
+
+    raise ValueError(f"Unknown rewrite strategy: {strategy}")
 
 
 def main():
-    # EDIT THIS PATH FOR YOUR TEST FILE
     file_path = "data/raw/sample.txt"
 
     print("1. Ingesting document...")
@@ -39,14 +56,10 @@ def main():
         raise RuntimeError("Mismatch between chunks and embeddings.")
 
     print("5. Creating VectorRecords...")
-    records = []
-
-    for chunk, embedding in zip(chunks, embeddings):
-        vr = VectorRecord(
-            chunk=chunk,
-            embedding=embedding,
-        )
-        records.append(vr)
+    records = [
+        VectorRecord(chunk=chunk, embedding=embedding)
+        for chunk, embedding in zip(chunks, embeddings)
+    ]
     print(f"   -> Created {len(records)} VectorRecords")
 
     print("6. Initializing VectorStore...")
@@ -56,9 +69,14 @@ def main():
     print(f"   -> Upserted {len(records)} records")
 
     print("7. Initializing Retriever...")
+    query_rewriter = build_query_rewriter(REWRITE_STRATEGY)
+    print(f"   -> Query rewrite strategy: {REWRITE_STRATEGY}")
 
-    query_rewriter = QueryRewriter()
-    retriever = Retriever(embedding_client=embed_client, vector_store=vector_store, query_rewriter=query_rewriter,)
+    retriever = Retriever(
+        embedding_client=embed_client,
+        vector_store=vector_store,
+        query_rewriter=query_rewriter,
+    )
 
     answer_generator = AnswerGenerator()
 
@@ -67,13 +85,14 @@ def main():
         answer_generator=answer_generator,
     )
 
-    print("8. Running evaluation queries...")
-
     telemetry_logger = TelemetryLogger()
+
+    print("8. Running evaluation queries...")
 
     for idx, case in enumerate(EVALUATION_CASES, start=1):
         question = case["question"]
         expected_topics = case["expected_topics"]
+
         print("\n" + "=" * 80)
         print(f"Evaluation Query {idx}: {question}")
         print("=" * 80)
@@ -96,15 +115,21 @@ def main():
 
         print("\nSources:")
         for source in response.sources:
-            print(f"- {source.file_name} | chunk {source.chunk_index} | score {source.score:.3f}")
-
-        if response.log:
-            print("\nTelemetry:")
-            print(f"Retrieved IDs: {response.log.retrieved_chunk_ids}")
-            print(f"Scores: {[round(score, 3) for score in response.log.scores]}")
+            print(
+                f"- {source.file_name} | "
+                f"chunk {source.chunk_index} | "
+                f"score {source.score:.3f}"
+            )
 
         if response.log:
             telemetry_logger.log_retrieval(response.log)
+
+            print("\nTelemetry:")
+            print(f"Original Query: {response.log.original_query}")
+            print(f"Retrieval Query: {response.log.retrieval_query}")
+            print(f"Retrieved IDs: {response.log.retrieved_chunk_ids}")
+            print(f"Scores: {[round(score, 3) for score in response.log.scores]}")
+
 
 if __name__ == "__main__":
     main()

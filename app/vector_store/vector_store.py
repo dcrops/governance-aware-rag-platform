@@ -48,6 +48,10 @@ class VectorStore:
             name=self.collection_name
         )
 
+    def count(self) -> int:
+        """Return the number of records in the collection."""
+        return self._collection.count()
+
     def upsert_records(self, records: List[VectorRecord]) -> None:
         """
         Upsert a batch of VectorRecord objects into the vector store.
