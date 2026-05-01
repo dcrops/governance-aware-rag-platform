@@ -42,13 +42,33 @@ class AnswerGenerator:
 
         # Construct the context from the search results
         context_chunks = [sr.text.strip() for sr in search_results]
-        context = "\n\n".join(f"Chunk {i+1}:\n{chunk}" for i, chunk in enumerate(context_chunks))
+        context_parts = []
+
+        for i, result in enumerate(search_results, start=1):
+            file_name = result.metadata.get("file_name", "Unknown document")
+            page_number = result.metadata.get("page_number")
+            chunk_index = result.metadata.get("chunk_index")
+
+            source_label = f"Source {i} | Document: {file_name}"
+
+            if page_number is not None:
+                source_label += f" | Page: {page_number}"
+
+            if chunk_index is not None:
+                source_label += f" | Chunk: {chunk_index}"
+
+            context_parts.append(
+                f"{source_label}\n{result.text.strip()}"
+            )
+
+        context = "\n\n".join(context_parts)
 
         # Instruction for the model
         system_prompt = (
             "You are an expert assistant. Use ONLY the provided context to answer the user's question. "
             "If the context does not provide enough information, reply: "
             "\"I'm sorry, I don't have enough information to answer that question based on the provided context.\" "
+            "When the user asks where information came from, refer to the document name and page number if available, not only the chunk number."
             "Do NOT use any outside knowledge or invent any information."
         )
 

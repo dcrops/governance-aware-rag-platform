@@ -2,3 +2,5 @@ openai
 chromadb
 pydantic
 streamlit
+pypdf 
+python-docx

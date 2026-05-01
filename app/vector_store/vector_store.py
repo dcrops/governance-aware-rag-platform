@@ -48,6 +48,10 @@ class VectorStore:
             name=self.collection_name
         )
 
+    def delete_collection(self) -> None:
+        """Delete the current Chroma collection."""
+        self._client.delete_collection(self.collection_name)
+
     def count(self) -> int:
         """Return the number of records in the collection."""
         return self._collection.count()
@@ -159,3 +163,71 @@ class VectorStore:
         search_results.sort(key=lambda r: -r.score)
 
         return search_results
+
+    def list_documents(self) -> list[dict]:
+        """
+        List indexed documents in the current collection, grouping by file_name.
+
+        Returns:
+            A list of dictionaries with file_name, file_type, and chunk_count.
+            Returns an empty list if the collection is empty.
+        """
+        if self._collection.count() == 0:
+            return []
+
+        results = self._collection.get(include=["metadatas"])
+        metadatas = results.get("metadatas", [])
+
+        grouped = {}
+
+        for metadata in metadatas:
+            file_name = metadata.get("file_name")
+            file_type = metadata.get("file_type")
+
+            if not file_name:
+                continue
+
+            if file_name not in grouped:
+                grouped[file_name] = {
+                    "file_name": file_name,
+                    "file_type": file_type,
+                    "chunk_count": 0,
+                }
+
+            grouped[file_name]["chunk_count"] += 1
+
+        return sorted(
+            grouped.values(),
+            key=lambda item: item["file_name"].lower(),
+        )
+
+    def delete_document(self, file_name: str) -> int:
+        """
+        Delete all chunks for the given file_name from the collection.
+
+        Args:
+            file_name (str): Name of the document to delete.
+
+        Returns:
+            int: Number of records deleted (0 if none found or deleted).
+        """
+        # Validate file_name
+        if not isinstance(file_name, str) or not file_name.strip():
+            raise ValueError("file_name must be a non-empty string.")
+
+        # Retrieve all ids whose file_name metadata matches
+        results = self._collection.get(include=["metadatas"])
+        ids_to_delete = [
+            result_id
+            for result_id, metadata in zip(
+                results.get("ids", []), results.get("metadatas", [])
+            )
+            if isinstance(metadata, dict)
+            and metadata.get("file_name") == file_name
+        ]
+
+        if not ids_to_delete:
+            return 0
+
+        self._collection.delete(ids=ids_to_delete)
+        return len(ids_to_delete)
