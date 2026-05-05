@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 
 # Virtual environments
 .venv/
@@ -18,3 +19,6 @@ data/index/
 # OS files
 .DS_Store
 Thumbs.db
+
+data/raw/bad_test.txt
+data/raw/no_headings_test.txt

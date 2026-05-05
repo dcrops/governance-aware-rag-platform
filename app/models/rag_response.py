@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from app.models.citation import Citation
 from app.models.retrieval_log import RetrievalLog
+from app.models.retrieval_result import RetrievalResult
 
 
 class RAGResponse(BaseModel):
@@ -10,6 +11,7 @@ class RAGResponse(BaseModel):
     """
     answer: str
     sources: list[Citation]
+    retrieval_result: RetrievalResult | None = None
     log: RetrievalLog | None = None
     retrieval_confidence: str | None = None
     answer_status: str | None = None

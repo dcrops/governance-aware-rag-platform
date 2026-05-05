@@ -4,7 +4,7 @@ import tempfile
 import streamlit as st
 
 from app.ingestion.ingest import ingest_document
-from app.chunking.chunker import chunk_document, chunk_document_by_delimiter, chunk_document_by_page
+from app.chunking.chunker import chunk_document, chunk_document_by_delimiter, chunk_document_by_page, chunk_document_by_heading
 from app.embeddings.embeddings import EmbeddingClient
 from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
@@ -12,6 +12,13 @@ from app.query_processing.query_rewriter import QueryRewriter
 from app.retrieval.retriever import Retriever
 from app.generation.answer_generator import AnswerGenerator
 from app.orchestration.rag_pipeline import RAGPipeline
+from app.ingestion.diagnostics import run_ingestion_diagnostics
+from app.ingestion.diagnostics_store import (
+    load_diagnostics,
+    save_document_diagnostics,
+    delete_document_diagnostics,
+    delete_client_diagnostics,
+)
 
 
 st.set_page_config(page_title="Client RAG UI", layout="wide")
@@ -28,7 +35,7 @@ uploaded_files = st.sidebar.file_uploader(
 
 chunking_strategy = st.sidebar.selectbox(
     "Chunking strategy",
-    options=["character", "delimiter", "page"],
+    options=["character", "delimiter", "page", "heading"],
     index=0,
 )
 
@@ -78,6 +85,15 @@ elif chunking_strategy == "delimiter":
         "Example delimiters: 'Book Title -', 'Section:', 'Policy:', 'Agenda Item:'."
     )
 
+elif chunking_strategy == "heading":
+
+    st.sidebar.caption(
+        "Heading-aware chunking attempts to preserve document sections "
+        "using detected headings such as numbered sections, ALL CAPS headings, "
+        "or lines ending with ':'. "
+        "Best for policies, procedures, manuals, and structured documents."
+    )
+
 index_btn = st.sidebar.button("Index Document")
 clear_btn = st.sidebar.button("Clear Client Index")
 
@@ -102,6 +118,42 @@ min_score = st.sidebar.slider(
     step=0.01,
 )
 
+# --- Retrieval Filters ---
+st.sidebar.subheader("Retrieval Filters")
+
+filter_options = ["All indexed documents"]
+
+try:
+    persist_dir = "data/index"
+    collection_name = f"client_{client_name.strip()}"
+
+    filter_vector_store = VectorStore(
+        persist_dir=persist_dir,
+        collection_name=collection_name,
+    )
+
+    indexed_documents_for_filter = filter_vector_store.list_documents()
+
+    filter_options.extend(
+        [doc["file_name"] for doc in indexed_documents_for_filter]
+    )
+
+except Exception:
+    indexed_documents_for_filter = []
+
+selected_retrieval_documents = st.sidebar.multiselect(
+    "Search scope",
+    options=[
+        doc["file_name"]
+        for doc in indexed_documents_for_filter
+    ],
+    default=[],
+)
+
+st.sidebar.caption(
+    "Leave empty to search across all indexed documents."
+)
+
 index_status = st.sidebar.empty()
 
 # --- Clear Index Logic ---
@@ -116,6 +168,10 @@ if clear_btn:
         )
 
         vector_store.delete_collection()
+        delete_client_diagnostics(
+            persist_dir=persist_dir,
+            client_name=client_name.strip(),
+        )
         st.sidebar.success(f"Cleared index for client '{client_name.strip()}'.")
     except Exception as e:
         st.sidebar.error(f"Failed to clear index: {e}")
@@ -132,19 +188,108 @@ with st.sidebar.expander("Indexed Documents", expanded=False):
 
         documents = vector_store.list_documents()
 
+        diagnostics_by_document = load_diagnostics(
+            persist_dir=persist_dir,
+            client_name=client_name.strip(),
+        )
+
         if not documents:
             st.info("No indexed documents found.")
         else:
             for doc in documents:
-                st.markdown(
-                    f"""
-**{doc['file_name']}**
-- Type: `{doc['file_type']}`
-- Chunks: `{doc['chunk_count']}`
-"""
+
+                doc_diagnostics = diagnostics_by_document.get(
+                    doc["file_name"],
+                    {},
                 )
 
-            document_names = [doc["file_name"] for doc in documents]
+                readiness_status = doc_diagnostics.get(
+                    "readiness_status",
+                    "Unknown",
+                )
+
+                warning_count = len(
+                    doc_diagnostics.get("warnings", [])
+                )
+
+                with st.expander(doc["file_name"], expanded=False):
+
+                    st.write("**Type:**", doc["file_type"])
+                    st.write("**Chunks:**", f"{doc['chunk_count']:,} chunks")
+                    st.write("**Readiness:**", readiness_status)
+
+                    if doc_diagnostics:
+                        st.write(
+                            "**Readiness score:**",
+                            f"{doc_diagnostics.get('readiness_score', 0)}/100",
+                        )
+
+                        st.write(
+                            "**Recommended chunking strategy:**",
+                            doc_diagnostics.get(
+                                "recommended_chunking_strategy",
+                                "Unknown",
+                            ),
+                        )
+
+                        st.write(
+                            "**Recommendation reason:**",
+                            doc_diagnostics.get(
+                                "recommendation_reason",
+                                "No recommendation available.",
+                            ),
+                        )
+
+                        st.write("**Warnings:**", warning_count)
+
+                        st.write("---")
+
+                        st.write(
+                            "**File size:**",
+                            f"{doc_diagnostics.get('file_size', 0):,} bytes",
+                        )
+
+                        st.write(
+                            "**Characters extracted:**",
+                            f"{doc_diagnostics.get('character_count', 0):,} characters",
+                        )
+
+                        st.write(
+                            "**Words extracted:**",
+                            f"{doc_diagnostics.get('word_count', 0):,} words",
+                        )
+
+                        page_count = doc_diagnostics.get("page_count")
+
+                        if page_count is not None:
+                            st.write(
+                                "**Pages extracted:**",
+                                f"{page_count:,} pages",
+                            )
+
+                        st.write(
+                            "**Average chunk length:**",
+                            f"{doc_diagnostics.get('average_chunk_length', 0):,.1f} characters per chunk",
+                        )
+
+                        warnings = doc_diagnostics.get("warnings", [])
+
+                        if warnings:
+                            st.warning("Review suggested")
+
+                            for warning in warnings:
+                                st.write(f"- {warning}")
+                        else:
+                            st.success("No major ingestion issues detected.")
+
+                    else:
+                        st.write("**Warnings:**", "Unknown")
+                        st.info("No persisted diagnostics found for this document.")
+
+            document_names = [
+                doc["file_name"]
+                for doc in documents
+            ]
 
             selected_document = st.selectbox(
                 "Select document to delete",
@@ -152,10 +297,21 @@ with st.sidebar.expander("Indexed Documents", expanded=False):
             )
 
             if st.button("Delete Selected Document"):
-                deleted_count = vector_store.delete_document(selected_document)
+
+                deleted_count = vector_store.delete_document(
+                    selected_document
+                )
+
+                delete_document_diagnostics(
+                    persist_dir=persist_dir,
+                    client_name=client_name.strip(),
+                    file_name=selected_document,
+                )
+
                 st.success(
                     f"Deleted {deleted_count} chunks for '{selected_document}'."
                 )
+
                 st.rerun()
 
     except Exception as e:
@@ -179,6 +335,13 @@ if index_btn:
                 collection_name=collection_name,
             )
 
+            existing_documents = vector_store.list_documents()
+
+            existing_file_names = {
+                doc["file_name"]
+                for doc in existing_documents
+            }
+
             if replace_existing_index:
                 try:
                     vector_store.delete_collection()
@@ -196,6 +359,24 @@ if index_btn:
             total_chunks = 0
 
             for uploaded_file in uploaded_files:
+                if uploaded_file.name in existing_file_names:
+
+                    deleted_count = vector_store.delete_document(
+                        uploaded_file.name
+                    )
+
+                    delete_document_diagnostics(
+                        persist_dir=persist_dir,
+                        client_name=client_name.strip(),
+                        file_name=uploaded_file.name,
+                    )
+
+                    index_status.info(
+                        f"Removed existing indexed version of "
+                        f"'{uploaded_file.name}' "
+                        f"({deleted_count} chunks) before re-indexing."
+                    )    
+
                 index_status.info(f"Processing document: {uploaded_file.name}")
 
                 file_extension = os.path.splitext(uploaded_file.name)[1]
@@ -229,11 +410,62 @@ if index_btn:
                 elif chunking_strategy == "page":
                     chunks = chunk_document_by_page(doc)
 
+                elif chunking_strategy == "heading":
+                    chunks = chunk_document_by_heading(doc)
+
                 else:
                     raise ValueError(f"Unknown chunking strategy: {chunking_strategy}")
 
                 if not chunks:
-                    raise RuntimeError(f"No chunks created from document: {uploaded_file.name}")
+                    raise RuntimeError(
+                        f"No chunks created from document: {uploaded_file.name}"
+                    )
+
+                diagnostics = run_ingestion_diagnostics(doc, chunks)
+                save_document_diagnostics(
+                    persist_dir=persist_dir,
+                    client_name=client_name.strip(),
+                    file_name=uploaded_file.name,
+                    diagnostics=diagnostics,
+                )
+
+                with st.expander(
+                    f"Document readiness: {diagnostics.file_name}",
+                    expanded=False,
+                ):
+                    st.write("**Readiness status:**", diagnostics.readiness_status)
+                    st.write("**Readiness score:**", f"{diagnostics.readiness_score}/100")
+
+                    st.write(
+                        "**Recommended chunking strategy:**",
+                        diagnostics.recommended_chunking_strategy,
+                    )
+
+                    st.write(
+                        "**Recommendation reason:**",
+                        diagnostics.recommendation_reason,
+                    )
+
+                    st.write("**File type:**", diagnostics.file_type)
+                    st.write("**File size:**", f"{diagnostics.file_size:,} bytes")
+                    st.write("**Characters extracted:**", f"{diagnostics.character_count:,} characters")
+                    st.write("**Words extracted:**", f"{diagnostics.word_count:,} words")
+
+                    if diagnostics.page_count is not None:
+                        st.write("**Pages extracted:**", f"{diagnostics.page_count:,} pages")
+
+                    st.write("**Chunks created:**", f"{diagnostics.chunk_count:,} chunks")
+                    st.write(
+                        "**Average chunk length:**",
+                        f"{diagnostics.average_chunk_length:,.1f} characters per chunk",
+                    )
+
+                    if diagnostics.warnings:
+                        st.warning("Review suggested:")
+                        for warning in diagnostics.warnings:
+                            st.write(f"- {warning}")
+                    else:
+                        st.success("No major ingestion issues detected.")
 
                 total_chunks += len(chunks)
 
@@ -315,11 +547,27 @@ if ask_btn:
                     answer_generator=answer_generator,
                 )
 
-                with st.spinner("Retrieving..."):
+                metadata_filter = None
+
+                if len(selected_retrieval_documents) == 1:
+                    metadata_filter = {
+                        "file_name": selected_retrieval_documents[0]
+                    }
+
+                elif len(selected_retrieval_documents) > 1:
+                    metadata_filter = {
+                        "$or": [
+                            {"file_name": doc_name}
+                            for doc_name in selected_retrieval_documents
+                        ]
+                    }
+
+                with st.spinner("Retrieving..."):    
                     response = pipeline.answer_question(
                         question,
                         top_k=top_k,
                         min_score=min_score,
+                        metadata_filter=metadata_filter,
                     )
 
                 st.subheader("Answer")
@@ -333,22 +581,34 @@ if ask_btn:
                 if response.sources:
                     for source in response.sources:
 
-                        label = (
-                            f"{source.file_name} | "
-                            f"chunk {source.chunk_index} | "
-                            f"score {source.score:.3f}"
-                        )
+                        label_parts = [source.file_name]
 
-                        # Prefer page number if available
                         if getattr(source, "metadata", None):
-                            page_number = source.metadata.get("page_number")
 
-                            if page_number is not None:
-                                label = (
-                                    f"{source.file_name} | "
-                                    f"page {page_number} | "
-                                    f"score {source.score:.3f}"
-                                )
+                            metadata = source.metadata
+
+                            section_title = metadata.get("section_title")
+                            page_number = metadata.get("page_number")
+                            chunking_strategy = metadata.get("chunking_strategy")
+
+                            if section_title:
+                                label_parts.append(f"section: {section_title}")
+
+                            elif page_number is not None:
+                                label_parts.append(f"page {page_number}")
+
+                            else:
+                                label_parts.append(f"chunk {source.chunk_index}")
+
+                            if chunking_strategy:
+                                label_parts.append(f"strategy: {chunking_strategy}")
+
+                        else:
+                            label_parts.append(f"chunk {source.chunk_index}")
+
+                        label_parts.append(f"score {source.score:.3f}")
+
+                        label = " | ".join(label_parts)
 
                         with st.expander(label):
 

@@ -1,6 +1,7 @@
 EVALUATION_CASES = [
     {
         "question": "What is this document about?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "AI learning",
             "projects",
@@ -11,6 +12,7 @@ EVALUATION_CASES = [
     },
     {
         "question": "What APIs are mentioned?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "FastAPI",
             "OpenAI APIs",
@@ -19,6 +21,7 @@ EVALUATION_CASES = [
     },
     {
         "question": "What AI technologies are mentioned?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "LLMs",
             "Streamlit",
@@ -29,6 +32,7 @@ EVALUATION_CASES = [
     },
     {
         "question": "What projects has the author worked on?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "custom AI models",
             "chatbots",
@@ -37,6 +41,7 @@ EVALUATION_CASES = [
     },
     {
         "question": "Does the document discuss FastAPI?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "FastAPI",
             "backend engineering",
@@ -45,6 +50,7 @@ EVALUATION_CASES = [
     },
     {
         "question": "What personal topics are mentioned?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [
             "dog adoption",
             "personal reflections",
@@ -53,14 +59,17 @@ EVALUATION_CASES = [
     },
     {
         "question": "What is the author's favourite food?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [],
     },
     {
         "question": "What company does the author currently work for?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [],
     },
     {
         "question": "What university did the author attend?",
+        "expected_documents": ["sample.txt"],
         "expected_topics": [],
     },
 ]

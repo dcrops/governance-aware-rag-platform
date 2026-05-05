@@ -91,6 +91,7 @@ def main():
 
     for idx, case in enumerate(EVALUATION_CASES, start=1):
         question = case["question"]
+        expected_documents = case.get("expected_documents", [])
         expected_topics = case["expected_topics"]
 
         print("\n" + "=" * 80)
@@ -120,6 +121,71 @@ def main():
                 f"chunk {source.chunk_index} | "
                 f"score {source.score:.3f}"
             )
+
+        retrieved_documents = [
+            source.file_name
+            for source in response.sources
+            if source.file_name
+        ]
+
+        expected_document_hits = [
+            doc_name
+            for doc_name in expected_documents
+            if doc_name in retrieved_documents
+        ]
+
+        expected_document_hit = bool(expected_document_hits)
+
+        expected_document_rank = None
+
+        for rank, source in enumerate(response.sources, start=1):
+            if source.file_name in expected_documents:
+                expected_document_rank = rank
+                break
+
+        top_score = response.sources[0].score if response.sources else 0
+
+        average_score = (
+            sum(source.score for source in response.sources) / len(response.sources)
+            if response.sources
+            else 0
+        )
+
+        print("\nRetrieval Evaluation:")
+        print(f"Expected Documents: {expected_documents}")
+        print(f"Retrieved Documents: {retrieved_documents}")
+        print(f"Expected Document Hit: {expected_document_hit}")
+        print(f"Expected Document Rank: {expected_document_rank}")
+        print(f"Top Score: {top_score:.3f}")
+        print(f"Average Score: {average_score:.3f}")
+
+        retrieved_text = " ".join(
+            result.text.lower()
+            for result in response.retrieval_result.search_results
+        )
+
+        matched_topics = [
+            topic
+            for topic in expected_topics
+            if topic.lower() in retrieved_text
+        ]
+
+        missing_topics = [
+            topic
+            for topic in expected_topics
+            if topic.lower() not in retrieved_text
+        ]
+
+        topic_match_rate = (
+            len(matched_topics) / len(expected_topics)
+            if expected_topics
+            else 1.0
+        )
+
+        print("\nTopic Evaluation:")
+        print(f"Matched Topics: {matched_topics}")
+        print(f"Missing Topics: {missing_topics}")
+        print(f"Topic Match Rate: {topic_match_rate:.2f}")
 
         if response.log:
             telemetry_logger.log_retrieval(response.log)

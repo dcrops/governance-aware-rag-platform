@@ -184,3 +184,116 @@ def chunk_document_by_page(doc: Document) -> list[Chunk]:
         raise ValueError("No non-empty page chunks were created.")
 
     return chunks
+
+def chunk_document_by_heading(doc: Document) -> list[Chunk]:
+    """
+    Splits a document into chunks based on detected headings using simple heuristics.
+
+    Supported heading patterns:
+    - ALL CAPS lines
+    - Numbered headings, e.g. "1. Purpose", "1.1 Scope"
+    - Lines ending with ":"
+
+    Each chunk includes the heading and associated section content.
+    """
+
+    text = doc.raw_text
+
+    if not text or not text.strip():
+        raise ValueError("Document raw_text is empty or whitespace-only.")
+
+    lines = text.splitlines(keepends=True)
+
+    heading_regexes = [
+        re.compile(r"^[A-Z][A-Z\s\d\-&/()]+$"),
+        re.compile(r"^\d+(\.\d+)*\.\s+[A-Z][A-Za-z\s\-&/()]{2,80}$"),
+        re.compile(r"^.{1,80}:\s*$"),
+    ]
+
+    def is_heading(line: str) -> bool:
+        stripped = line.strip()
+
+        if not stripped:
+            return False
+
+        if len(stripped) > 120:
+            return False
+
+        if stripped.endswith("?"):
+            return False
+
+        if len(stripped.split()) > 12:
+            return False
+
+        return any(pattern.match(stripped) for pattern in heading_regexes)
+
+    section_boundaries: list[tuple[int, str]] = []
+    current_char_position = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        if is_heading(line):
+            section_boundaries.append((current_char_position, stripped))
+
+        current_char_position += len(line)
+
+    if not section_boundaries:
+        return [
+            Chunk(
+                chunk_id=f"{doc.doc_id}_heading_0",
+                doc_id=doc.doc_id,
+                chunk_index=0,
+                text=text,
+                metadata={
+                    "doc_id": doc.doc_id,
+                    "file_name": doc.metadata.get("file_name", ""),
+                    "file_type": doc.file_type,
+                    "chunk_index": 0,
+                    "char_start": 0,
+                    "char_end": len(text),
+                    "section_title": "",
+                    "chunking_strategy": "heading",
+                },
+            )
+        ]
+
+    chunks: list[Chunk] = []
+
+    for section_index, (start_char, heading) in enumerate(section_boundaries):
+        end_char = (
+            section_boundaries[section_index + 1][0]
+            if section_index + 1 < len(section_boundaries)
+            else len(text)
+        )
+
+        section_text = text[start_char:end_char].strip()
+
+        if not section_text:
+            continue
+
+        chunk_index = len(chunks)
+
+        chunk = Chunk(
+            chunk_id=f"{doc.doc_id}_heading_{chunk_index}",
+            doc_id=doc.doc_id,
+            chunk_index=chunk_index,
+            text=section_text,
+            metadata={
+                "doc_id": doc.doc_id,
+                "file_name": doc.metadata.get("file_name", ""),
+                "file_type": doc.file_type,
+                "chunk_index": chunk_index,
+                "char_start": start_char,
+                "char_end": end_char,
+                "section_title": heading,
+                "chunking_strategy": "heading",
+            },
+        )
+
+        chunks.append(chunk)
+
+    if not chunks:
+        raise ValueError("No non-empty heading chunks were created.")
+
+    return chunks

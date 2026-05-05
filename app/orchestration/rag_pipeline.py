@@ -100,6 +100,7 @@ class RAGPipeline:
                 answer=fallback_answer,
                 sources=[],
                 log=log,
+                retrieval_result=retrieval_result,
                 retrieval_confidence="NONE",
                 answer_status="NO_RESULTS",
             )
@@ -140,6 +141,7 @@ class RAGPipeline:
             answer=answer,
             sources=sources,
             log=log,
+            retrieval_result=retrieval_result,
             retrieval_confidence=retrieval_confidence,
             answer_status=answer_status,
         )
