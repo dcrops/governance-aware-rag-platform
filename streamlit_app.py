@@ -1,10 +1,17 @@
 import os
 import tempfile
+from datetime import datetime, timezone
 
 import streamlit as st
 
+from app.config import PERSIST_DIR
 from app.ingestion.ingest import ingest_document
-from app.chunking.chunker import chunk_document, chunk_document_by_delimiter, chunk_document_by_page, chunk_document_by_heading
+from app.chunking.chunker import (
+    chunk_document,
+    chunk_document_by_delimiter,
+    chunk_document_by_page,
+    chunk_document_by_heading,
+)
 from app.embeddings.embeddings import EmbeddingClient
 from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
@@ -19,14 +26,69 @@ from app.ingestion.diagnostics_store import (
     delete_document_diagnostics,
     delete_client_diagnostics,
 )
-
+from app.document_management.document_registry import (
+    save_document_record,
+    load_registry,
+    delete_document_record,
+    delete_client_registry,
+)
+from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 
 st.set_page_config(page_title="Client RAG UI", layout="wide")
 
-# --- Sidebar: Indexing Section ---
-st.sidebar.header("Client Document Indexing")
+persist_dir = PERSIST_DIR
 
-client_name = st.sidebar.text_input("Client Name", value="demo_client")
+# --- Sidebar: Client / KB State ---
+st.sidebar.header("Client Knowledge Base")
+
+client_name = st.sidebar.text_input("Client Name", value=DEFAULT_CLIENT_NAME)
+client_name_clean = client_name.strip()
+collection_name = f"client_{client_name_clean}"
+
+registry = load_registry(
+    persist_dir=persist_dir,
+    client_name=client_name_clean,
+)
+
+registry_documents = registry.get("documents", {})
+
+diagnostics_by_document = load_diagnostics(
+    persist_dir=persist_dir,
+    client_name=client_name_clean,
+)
+
+# --- Knowledge Base Summary ---
+st.sidebar.subheader("Knowledge Base Summary")
+
+document_count = len(registry_documents)
+total_chunk_count = sum(
+    record.get("chunk_count", 0)
+    for record in registry_documents.values()
+)
+
+readiness_scores = [
+    record.get("readiness_score")
+    for record in registry_documents.values()
+    if isinstance(record.get("readiness_score"), (int, float))
+]
+
+average_readiness_score = (
+    sum(readiness_scores) / len(readiness_scores)
+    if readiness_scores
+    else None
+)
+
+st.sidebar.write(f"**Documents:** {document_count}")
+st.sidebar.write(f"**Total Chunks:** {total_chunk_count:,}")
+
+if average_readiness_score is not None:
+    st.sidebar.write(f"**Average Readiness:** {average_readiness_score:.1f}/100")
+else:
+    st.sidebar.write("**Average Readiness:** N/A")
+
+# --- Upload / Indexing Controls ---
+st.sidebar.subheader("Document Upload")
+
 uploaded_files = st.sidebar.file_uploader(
     "Upload Documents",
     type=["txt", "pdf", "docx"],
@@ -40,9 +102,8 @@ chunking_strategy = st.sidebar.selectbox(
 )
 
 st.sidebar.caption(
-    "Chunking guidance: use character chunking for general documents. "
-    "Use delimiter chunking when the document has clear repeated sections, "
-    "such as 'Book Title -', 'Section:', or 'Agenda Item:'."
+    "Use character chunking for general documents. Use delimiter chunking when "
+    "documents have clear repeated sections such as 'Section:' or 'Question:'."
 )
 
 chunk_size = None
@@ -67,10 +128,8 @@ if chunking_strategy == "character":
     )
 
     st.sidebar.caption(
-        "Suggested starting points: "
-        "800–1200 chars for general documents, "
-        "1500–2500 for long policies/manuals, "
-        "500–900 for short notes or dense content. "
+        "Suggested starting points: 800–1200 chars for general documents, "
+        "1500–2500 for long policies/manuals, 500–900 for short notes. "
         "Overlap is usually 10–20% of chunk size."
     )
 
@@ -81,32 +140,43 @@ elif chunking_strategy == "delimiter":
     )
 
     st.sidebar.caption(
-        "Delimiter chunking keeps each repeated section together. "
-        "Example delimiters: 'Book Title -', 'Section:', 'Policy:', 'Agenda Item:'."
+        "Delimiter chunking keeps repeated sections together. "
+        "Examples: 'Question:', 'Section:', 'Policy:', 'Agenda Item:'."
     )
 
 elif chunking_strategy == "heading":
-
     st.sidebar.caption(
-        "Heading-aware chunking attempts to preserve document sections "
-        "using detected headings such as numbered sections, ALL CAPS headings, "
-        "or lines ending with ':'. "
+        "Heading-aware chunking attempts to preserve sections using detected headings. "
         "Best for policies, procedures, manuals, and structured documents."
     )
 
 index_btn = st.sidebar.button("Index Document")
-clear_btn = st.sidebar.button("Clear Client Index")
 
 replace_existing_index = st.sidebar.checkbox(
     "Replace existing client index before indexing",
     value=False,
 )
 
+clear_btn = st.sidebar.button("Clear Client Index")
+
+index_status = st.sidebar.empty()
+
+# --- Retrieval Controls ---
+st.sidebar.subheader("Retrieval Settings")
+
+selected_retrieval_documents = st.sidebar.multiselect(
+    "Search scope",
+    options=list(registry_documents.keys()),
+    default=[],
+)
+
+st.sidebar.caption("Leave empty to search across all indexed documents.")
+
 top_k = st.sidebar.slider(
     "Number of chunks to retrieve",
     min_value=3,
     max_value=30,
-    value=5,
+    value=DEFAULT_TOP_K,
     step=1,
 )
 
@@ -114,212 +184,122 @@ min_score = st.sidebar.slider(
     "Minimum retrieval score",
     min_value=0.0,
     max_value=1.0,
-    value=0.35,
+    value=DEFAULT_MIN_SCORE,
     step=0.01,
 )
 
-# --- Retrieval Filters ---
-st.sidebar.subheader("Retrieval Filters")
+# --- Indexed Documents Registry UI ---
+st.sidebar.subheader("Indexed Documents")
 
-filter_options = ["All indexed documents"]
+if registry_documents:
+    for file_name, record in registry_documents.items():
+        with st.sidebar.expander(file_name):
+            st.write(f"**Chunking Strategy:** {record.get('chunking_strategy')}")
+            st.write(f"**Chunk Count:** {record.get('chunk_count')}")
+            st.write(f"**Indexed At:** {record.get('indexed_at')}")
 
-try:
-    persist_dir = "data/index"
-    collection_name = f"client_{client_name.strip()}"
+            readiness_score = record.get("readiness_score")
+            readiness_status = record.get("readiness_status")
 
-    filter_vector_store = VectorStore(
-        persist_dir=persist_dir,
-        collection_name=collection_name,
-    )
+            if readiness_status == "Good":
+                st.success(f"Readiness: {readiness_score}/100 — Good")
+            elif readiness_status == "Needs Review":
+                st.warning(f"Readiness: {readiness_score}/100 — Needs Review")
+            elif readiness_status == "Poor":
+                st.error(f"Readiness: {readiness_score}/100 — Poor")
+            else:
+                st.info("Readiness: Unknown")
 
-    indexed_documents_for_filter = filter_vector_store.list_documents()
+            doc_diagnostics = diagnostics_by_document.get(file_name, {})
 
-    filter_options.extend(
-        [doc["file_name"] for doc in indexed_documents_for_filter]
-    )
+            if doc_diagnostics:
+                st.write("---")
+                st.write(
+                    "**Recommended Chunking Strategy:**",
+                    doc_diagnostics.get("recommended_chunking_strategy", "Unknown"),
+                )
+                st.write(
+                    "**Recommendation Reason:**",
+                    doc_diagnostics.get(
+                        "recommendation_reason",
+                        "No recommendation available.",
+                    ),
+                )
 
-except Exception:
-    indexed_documents_for_filter = []
+                warnings = doc_diagnostics.get("warnings", [])
 
-selected_retrieval_documents = st.sidebar.multiselect(
-    "Search scope",
-    options=[
-        doc["file_name"]
-        for doc in indexed_documents_for_filter
-    ],
-    default=[],
-)
+                if warnings:
+                    st.warning("Review suggested")
+                    for warning in warnings:
+                        st.write(f"- {warning}")
+                else:
+                    st.success("No major ingestion issues detected.")
 
-st.sidebar.caption(
-    "Leave empty to search across all indexed documents."
-)
+            if st.button(
+                f"Delete Document: {file_name}",
+                key=f"delete_document_{file_name}",
+            ):
+                try:
+                    vector_store = VectorStore(
+                        persist_dir=persist_dir,
+                        collection_name=collection_name,
+                    )
 
-index_status = st.sidebar.empty()
+                    deleted_count = vector_store.delete_document(file_name)
+
+                    delete_document_diagnostics(
+                        persist_dir=persist_dir,
+                        client_name=client_name_clean,
+                        file_name=file_name,
+                    )
+
+                    delete_document_record(
+                        persist_dir=persist_dir,
+                        client_name=client_name_clean,
+                        file_name=file_name,
+                    )
+
+                    st.sidebar.success(
+                        f"Deleted '{file_name}' and {deleted_count} vector chunk(s)."
+                    )
+
+                    st.rerun()
+
+                except Exception as e:
+                    st.sidebar.error(f"Failed to delete document: {e}")
+
+else:
+    st.sidebar.info("No indexed documents.")
 
 # --- Clear Index Logic ---
 if clear_btn:
     try:
-        persist_dir = "data/index"
-        collection_name = f"client_{client_name.strip()}"
-
         vector_store = VectorStore(
             persist_dir=persist_dir,
             collection_name=collection_name,
         )
 
         vector_store.delete_collection()
+
         delete_client_diagnostics(
             persist_dir=persist_dir,
-            client_name=client_name.strip(),
+            client_name=client_name_clean,
         )
-        st.sidebar.success(f"Cleared index for client '{client_name.strip()}'.")
+
+        delete_client_registry(
+            persist_dir=persist_dir,
+            client_name=client_name_clean,
+        )
+
+        st.sidebar.success(f"Cleared index for client '{client_name_clean}'.")
+        st.rerun()
+
     except Exception as e:
         st.sidebar.error(f"Failed to clear index: {e}")
 
-with st.sidebar.expander("Indexed Documents", expanded=False):
-    try:
-        persist_dir = "data/index"
-        collection_name = f"client_{client_name.strip()}"
-
-        vector_store = VectorStore(
-            persist_dir=persist_dir,
-            collection_name=collection_name,
-        )
-
-        documents = vector_store.list_documents()
-
-        diagnostics_by_document = load_diagnostics(
-            persist_dir=persist_dir,
-            client_name=client_name.strip(),
-        )
-
-        if not documents:
-            st.info("No indexed documents found.")
-        else:
-            for doc in documents:
-
-                doc_diagnostics = diagnostics_by_document.get(
-                    doc["file_name"],
-                    {},
-                )
-
-                readiness_status = doc_diagnostics.get(
-                    "readiness_status",
-                    "Unknown",
-                )
-
-                warning_count = len(
-                    doc_diagnostics.get("warnings", [])
-                )
-
-                with st.expander(doc["file_name"], expanded=False):
-
-                    st.write("**Type:**", doc["file_type"])
-                    st.write("**Chunks:**", f"{doc['chunk_count']:,} chunks")
-                    st.write("**Readiness:**", readiness_status)
-
-                    if doc_diagnostics:
-                        st.write(
-                            "**Readiness score:**",
-                            f"{doc_diagnostics.get('readiness_score', 0)}/100",
-                        )
-
-                        st.write(
-                            "**Recommended chunking strategy:**",
-                            doc_diagnostics.get(
-                                "recommended_chunking_strategy",
-                                "Unknown",
-                            ),
-                        )
-
-                        st.write(
-                            "**Recommendation reason:**",
-                            doc_diagnostics.get(
-                                "recommendation_reason",
-                                "No recommendation available.",
-                            ),
-                        )
-
-                        st.write("**Warnings:**", warning_count)
-
-                        st.write("---")
-
-                        st.write(
-                            "**File size:**",
-                            f"{doc_diagnostics.get('file_size', 0):,} bytes",
-                        )
-
-                        st.write(
-                            "**Characters extracted:**",
-                            f"{doc_diagnostics.get('character_count', 0):,} characters",
-                        )
-
-                        st.write(
-                            "**Words extracted:**",
-                            f"{doc_diagnostics.get('word_count', 0):,} words",
-                        )
-
-                        page_count = doc_diagnostics.get("page_count")
-
-                        if page_count is not None:
-                            st.write(
-                                "**Pages extracted:**",
-                                f"{page_count:,} pages",
-                            )
-
-                        st.write(
-                            "**Average chunk length:**",
-                            f"{doc_diagnostics.get('average_chunk_length', 0):,.1f} characters per chunk",
-                        )
-
-                        warnings = doc_diagnostics.get("warnings", [])
-
-                        if warnings:
-                            st.warning("Review suggested")
-
-                            for warning in warnings:
-                                st.write(f"- {warning}")
-                        else:
-                            st.success("No major ingestion issues detected.")
-
-                    else:
-                        st.write("**Warnings:**", "Unknown")
-                        st.info("No persisted diagnostics found for this document.")
-
-            document_names = [
-                doc["file_name"]
-                for doc in documents
-            ]
-
-            selected_document = st.selectbox(
-                "Select document to delete",
-                options=document_names,
-            )
-
-            if st.button("Delete Selected Document"):
-
-                deleted_count = vector_store.delete_document(
-                    selected_document
-                )
-
-                delete_document_diagnostics(
-                    persist_dir=persist_dir,
-                    client_name=client_name.strip(),
-                    file_name=selected_document,
-                )
-
-                st.success(
-                    f"Deleted {deleted_count} chunks for '{selected_document}'."
-                )
-
-                st.rerun()
-
-    except Exception as e:
-        st.error(f"Failed to load indexed documents: {e}")
-
 # --- Indexing Logic ---
 if index_btn:
-    if not client_name.strip():
+    if not client_name_clean:
         index_status.error("Please enter a client name.")
     elif not uploaded_files:
         index_status.error("Please upload one or more documents to index.")
@@ -327,9 +307,6 @@ if index_btn:
         tmp_paths = []
 
         try:
-            persist_dir = "data/index"
-            collection_name = f"client_{client_name.strip()}"
-
             vector_store = VectorStore(
                 persist_dir=persist_dir,
                 collection_name=collection_name,
@@ -345,29 +322,48 @@ if index_btn:
             if replace_existing_index:
                 try:
                     vector_store.delete_collection()
+
+                    delete_client_diagnostics(
+                        persist_dir=persist_dir,
+                        client_name=client_name_clean,
+                    )
+
+                    delete_client_registry(
+                        persist_dir=persist_dir,
+                        client_name=client_name_clean,
+                    )
+
                     vector_store = VectorStore(
                         persist_dir=persist_dir,
                         collection_name=collection_name,
                     )
+
+                    existing_file_names = set()
+
                     index_status.info("Existing client index cleared before indexing.")
+
                 except Exception:
                     index_status.info("No existing client index found to clear.")
 
             embedding_client = EmbeddingClient()
 
             all_records = []
+            document_records = []
             total_chunks = 0
 
             for uploaded_file in uploaded_files:
                 if uploaded_file.name in existing_file_names:
-
-                    deleted_count = vector_store.delete_document(
-                        uploaded_file.name
-                    )
+                    deleted_count = vector_store.delete_document(uploaded_file.name)
 
                     delete_document_diagnostics(
                         persist_dir=persist_dir,
-                        client_name=client_name.strip(),
+                        client_name=client_name_clean,
+                        file_name=uploaded_file.name,
+                    )
+
+                    delete_document_record(
+                        persist_dir=persist_dir,
+                        client_name=client_name_clean,
                         file_name=uploaded_file.name,
                     )
 
@@ -375,7 +371,7 @@ if index_btn:
                         f"Removed existing indexed version of "
                         f"'{uploaded_file.name}' "
                         f"({deleted_count} chunks) before re-indexing."
-                    )    
+                    )
 
                 index_status.info(f"Processing document: {uploaded_file.name}")
 
@@ -422,9 +418,10 @@ if index_btn:
                     )
 
                 diagnostics = run_ingestion_diagnostics(doc, chunks)
+
                 save_document_diagnostics(
                     persist_dir=persist_dir,
-                    client_name=client_name.strip(),
+                    client_name=client_name_clean,
                     file_name=uploaded_file.name,
                     diagnostics=diagnostics,
                 )
@@ -448,13 +445,25 @@ if index_btn:
 
                     st.write("**File type:**", diagnostics.file_type)
                     st.write("**File size:**", f"{diagnostics.file_size:,} bytes")
-                    st.write("**Characters extracted:**", f"{diagnostics.character_count:,} characters")
-                    st.write("**Words extracted:**", f"{diagnostics.word_count:,} words")
+                    st.write(
+                        "**Characters extracted:**",
+                        f"{diagnostics.character_count:,} characters",
+                    )
+                    st.write(
+                        "**Words extracted:**",
+                        f"{diagnostics.word_count:,} words",
+                    )
 
                     if diagnostics.page_count is not None:
-                        st.write("**Pages extracted:**", f"{diagnostics.page_count:,} pages")
+                        st.write(
+                            "**Pages extracted:**",
+                            f"{diagnostics.page_count:,} pages",
+                        )
 
-                    st.write("**Chunks created:**", f"{diagnostics.chunk_count:,} chunks")
+                    st.write(
+                        "**Chunks created:**",
+                        f"{diagnostics.chunk_count:,} chunks",
+                    )
                     st.write(
                         "**Average chunk length:**",
                         f"{diagnostics.average_chunk_length:,.1f} characters per chunk",
@@ -484,15 +493,36 @@ if index_btn:
 
                 all_records.extend(records)
 
+                document_records.append(
+                    {
+                        "file_name": uploaded_file.name,
+                        "file_type": doc.file_type,
+                        "chunk_count": len(chunks),
+                        "chunking_strategy": chunking_strategy,
+                        "readiness_status": diagnostics.readiness_status,
+                        "readiness_score": diagnostics.readiness_score,
+                        "indexed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+
             if not all_records:
                 raise RuntimeError("No records were created from uploaded documents.")
 
             vector_store.upsert_records(all_records)
 
+            for record in document_records:
+                save_document_record(
+                    persist_dir=persist_dir,
+                    client_name=client_name_clean,
+                    record=record,
+                )
+
             index_status.success(
                 f"Successfully indexed {len(uploaded_files)} document(s), "
-                f"{total_chunks} chunks, for client '{client_name.strip()}'."
+                f"{total_chunks} chunks, for client '{client_name_clean}'."
             )
+
+            st.rerun()
 
         except Exception as e:
             index_status.error(f"Indexing failed: {e}")
@@ -511,25 +541,25 @@ qa_status = st.empty()
 
 if ask_btn:
     st.write("---")
-    if not client_name.strip():
+
+    if not client_name_clean:
         qa_status.error("Please enter a client name in the sidebar before asking a question.")
     elif not question.strip():
         qa_status.error("Please enter a question to ask.")
     else:
         try:
-            persist_dir = "data/index"
-            collection_name = f"client_{client_name.strip()}"
-
             vector_store = VectorStore(
                 persist_dir=persist_dir,
                 collection_name=collection_name,
             )
 
             count = vector_store.count()
+
             if count == 0:
                 qa_status.error(
                     f"No records found in collection '{collection_name}'. Please index a document first."
                 )
+
             else:
                 embedding_client = EmbeddingClient()
                 query_rewriter = QueryRewriter()
@@ -562,7 +592,7 @@ if ask_btn:
                         ]
                     }
 
-                with st.spinner("Retrieving..."):    
+                with st.spinner("Retrieving..."):
                     response = pipeline.answer_question(
                         question,
                         top_k=top_k,
@@ -573,25 +603,51 @@ if ask_btn:
                 st.subheader("Answer")
                 st.markdown(response.answer if response.answer else "*No answer generated.*")
 
-                st.write("**Retrieval Confidence**:", response.retrieval_confidence)
                 st.write("**Answer Status**:", response.answer_status)
+                st.write("**Retrieval Confidence**:", response.retrieval_confidence)
+
+                retrieved_document_names = sorted(
+                    {
+                        source.file_name
+                        for source in response.sources
+                        if source.file_name
+                    }
+                )
+
+                st.write(
+                    "**Documents Used:**",
+                    ", ".join(retrieved_document_names)
+                    if retrieved_document_names
+                    else "None",
+                )
+
+                st.metric("Retrieved Chunks", len(response.sources))
+
+                if selected_retrieval_documents:
+                    st.write(
+                        "**Retrieval Scope:**",
+                        ", ".join(selected_retrieval_documents),
+                    )
+                else:
+                    st.write("**Retrieval Scope:** All indexed documents")
 
                 st.write("**Sources:**")
 
                 if response.sources:
                     for source in response.sources:
-
                         label_parts = [source.file_name]
 
                         if getattr(source, "metadata", None):
-
                             metadata = source.metadata
 
                             section_title = metadata.get("section_title")
                             page_number = metadata.get("page_number")
-                            chunking_strategy = metadata.get("chunking_strategy")
+                            source_chunking_strategy = metadata.get("chunking_strategy")
 
                             if section_title:
+                                if len(section_title) > 50:
+                                    section_title = section_title[:47] + "..."
+
                                 label_parts.append(f"section: {section_title}")
 
                             elif page_number is not None:
@@ -600,8 +656,8 @@ if ask_btn:
                             else:
                                 label_parts.append(f"chunk {source.chunk_index}")
 
-                            if chunking_strategy:
-                                label_parts.append(f"strategy: {chunking_strategy}")
+                            if source_chunking_strategy:
+                                label_parts.append(f"strategy: {source_chunking_strategy}")
 
                         else:
                             label_parts.append(f"chunk {source.chunk_index}")
@@ -611,7 +667,6 @@ if ask_btn:
                         label = " | ".join(label_parts)
 
                         with st.expander(label):
-
                             if source.text_preview:
                                 st.write(source.text_preview)
                             else:
@@ -621,6 +676,7 @@ if ask_btn:
                     st.write("_No sources found._")
 
                 st.write("**Telemetry:**")
+
                 if response.log:
                     st.code(
                         f"Original Query: {response.log.original_query}\n"

@@ -61,15 +61,18 @@ EVALUATION_CASES = [
         "question": "What is the author's favourite food?",
         "expected_documents": ["sample.txt"],
         "expected_topics": [],
+        "expected_answer_status": "INSUFFICIENT_EVIDENCE",
     },
     {
         "question": "What company does the author currently work for?",
         "expected_documents": ["sample.txt"],
         "expected_topics": [],
+        "expected_answer_status": "INSUFFICIENT_EVIDENCE",
     },
     {
         "question": "What university did the author attend?",
         "expected_documents": ["sample.txt"],
         "expected_topics": [],
+        "expected_answer_status": "INSUFFICIENT_EVIDENCE",
     },
 ]

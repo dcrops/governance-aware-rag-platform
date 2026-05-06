@@ -3,11 +3,12 @@ from app.chunking.chunker import chunk_document
 from app.embeddings.embeddings import EmbeddingClient
 from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
+from app.config import PERSIST_DIR
 
 def main():
     client_name = "demo_client"
     doc_path = "data/raw/sample.txt"
-    persist_dir = "data/index"
+    persist_dir = PERSIST_DIR
     collection_name = f"client_{client_name}"
 
     print(f"[Indexing] Starting indexing for client: '{client_name}'")

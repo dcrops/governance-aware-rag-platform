@@ -1,0 +1,19 @@
+SECTION: LEAVE MANAGEMENT
+
+Employees must submit annual leave requests at least two weeks in advance. Managers are responsible for reviewing leave balances before approving requests.
+
+SECTION: PAYROLL APPROVALS
+
+Payroll approval must occur before 3:00 PM each Wednesday. Delayed approvals may result in payment delays.
+
+SECTION: TERMINATION PROCESS
+
+Termination payments must include outstanding leave balances and final ordinary hours worked. Supporting documentation must be retained for audit purposes.
+
+SECTION: RECORD KEEPING
+
+Payroll records must be retained for seven years. Access to payroll records is restricted to authorised personnel only.
+
+SECTION: COMPLIANCE REVIEW
+
+Quarterly payroll governance reviews should assess exception handling, configuration changes, and evidence retention processes.

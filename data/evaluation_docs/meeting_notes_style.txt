@@ -1,0 +1,9 @@
+Project Governance Meeting - April 2026
+
+The team discussed improvements to payroll diagnostics reporting and retrieval evaluation. A proposal was made to improve document chunking strategies for policy documents and operational manuals.
+
+Discussion also focused on AI retrieval observability, including telemetry logging and unsupported-answer handling.
+
+One concern raised was inconsistent document formatting across client policy packs. The group agreed that ingestion diagnostics should identify low-quality or poorly structured documents before indexing.
+
+The meeting concluded with agreement to evaluate heading chunking versus character chunking across several synthetic test datasets.
