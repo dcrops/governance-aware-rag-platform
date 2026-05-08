@@ -88,11 +88,22 @@ class RAGPipeline:
 
             log = RetrievalLog(
                 question=question,
+
                 original_query=retrieval_result.original_query,
                 retrieval_query=retrieval_result.retrieval_query,
+
                 retrieved_chunk_ids=[],
                 scores=[],
+
                 answer=fallback_answer,
+
+                answer_status="NO_RESULTS",
+                retrieval_confidence="NONE",
+
+                requested_retrieval_depth=top_k,
+
+                documents_used=[],
+
                 timestamp=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -131,9 +142,32 @@ class RAGPipeline:
             question=question,
             original_query=retrieval_result.original_query,
             retrieval_query=retrieval_result.retrieval_query,
-            retrieved_chunk_ids=[result.id for result in search_results],
-            scores=[result.score for result in search_results],
+
+            retrieved_chunk_ids=[
+                result.id
+                for result in search_results
+            ],
+
+            scores=[
+                result.score
+                for result in search_results
+            ],
+
             answer=answer,
+
+            answer_status=answer_status,
+            retrieval_confidence=retrieval_confidence,
+
+            requested_retrieval_depth=top_k,
+
+            documents_used=list(
+                {
+                    result.metadata.get("file_name")
+                    for result in search_results
+                    if result.metadata.get("file_name")
+                }
+            ),
+
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 

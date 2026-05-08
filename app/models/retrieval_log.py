@@ -1,15 +1,29 @@
 from pydantic import BaseModel
 from typing import List
 
+
 class RetrievalLog(BaseModel):
     """
     Represents telemetry data for a single RAG pipeline execution,
-    including the user's question, retrieved evidence, answer, and timestamp.
+    including the user's question, rewritten retrieval query,
+    retrieved evidence, answer metadata, and timestamp.
     """
+
     question: str
-    retrieved_chunk_ids: List[str]
-    scores: List[float]
-    answer: str
-    timestamp: str
+
     original_query: str
     retrieval_query: str
+
+    retrieved_chunk_ids: List[str]
+    scores: List[float]
+
+    answer: str
+
+    answer_status: str | None = None
+    retrieval_confidence: str | None = None
+
+    requested_retrieval_depth: int | None = None
+
+    documents_used: List[str] = []
+
+    timestamp: str

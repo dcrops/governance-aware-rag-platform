@@ -1,6 +1,7 @@
 import os
 import tempfile
 from datetime import datetime, timezone
+from openai import OpenAI
 
 import streamlit as st
 
@@ -32,11 +33,94 @@ from app.document_management.document_registry import (
     delete_document_record,
     delete_client_registry,
 )
+from app.telemetry.telemetry_logger import TelemetryLogger
+
+
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 
 st.set_page_config(page_title="Client RAG UI", layout="wide")
 
 persist_dir = PERSIST_DIR
+
+rewrite_client = OpenAI()
+
+def build_contextual_question(question: str, chat_history: list[dict]) -> str:
+    if not chat_history:
+        return question
+
+    recent_history = chat_history[-3:]
+
+    context_lines = []
+
+    for turn in recent_history:
+        context_lines.append(f"Previous question: {turn.get('question', '')}")
+        context_lines.append(f"Previous answer: {turn.get('answer', '')}")
+
+    conversation_context = "\n".join(context_lines)
+
+    prompt = f"""
+You rewrite follow-up questions into standalone questions for a RAG system.
+
+Use the recent conversation only to resolve references such as:
+it, that, this, he, she, they, the event, the date, the person.
+
+Do not answer the question.
+Return only the rewritten standalone question.
+
+Recent conversation:
+{conversation_context}
+
+Current question:
+{question}
+
+Standalone question:
+"""
+
+    response = rewrite_client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        temperature=0,
+        max_tokens=80,
+    )
+
+    return response.choices[0].message.content.strip()
+
+def get_effective_top_k(question: str, selected_top_k: int) -> int:
+    broad_query_terms = [
+        "all",
+        "every",
+        "list",
+        "summarise",
+        "summarize",
+        "across",
+        "all documents",
+        "all docs",
+        "mentioned",
+        "complete",
+    ]
+
+    question_lower = question.lower()
+
+    is_broad_query = any(
+        term in question_lower
+        for term in broad_query_terms
+    )
+
+    if is_broad_query:
+        return max(selected_top_k, 15)
+
+    return selected_top_k
+
+# --- Session Conversation State ---
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+telemetry_logger = TelemetryLogger()
 
 # --- Sidebar: Client / KB State ---
 st.sidebar.header("Client Knowledge Base")
@@ -532,10 +616,23 @@ if index_btn:
                 if tmp_path and os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
+
 # --- Main: QA Section ---
+
+# --- Conversation Controls ---
+col1, col2 = st.columns([1, 5])
+
+with col1:
+    if st.button("Clear Conversation"):
+        st.session_state.chat_history = []
+        st.rerun()
+
 st.header("Ask a Question")
 
-question = st.text_input("Type your question here:")
+question = st.text_input(
+    "Type your question here:",
+    placeholder="Ask a question about the indexed knowledge base...",
+)
 ask_btn = st.button("Ask Question")
 qa_status = st.empty()
 
@@ -593,12 +690,35 @@ if ask_btn:
                     }
 
                 with st.spinner("Retrieving..."):
+                    retrieval_question = build_contextual_question(
+                        question=question,
+                        chat_history=st.session_state.chat_history,
+                    )
+
+                    effective_top_k = get_effective_top_k(
+                        question=retrieval_question,
+                        selected_top_k=top_k,
+                    )
+
                     response = pipeline.answer_question(
-                        question,
-                        top_k=top_k,
+                        retrieval_question,
+                        top_k=effective_top_k,
                         min_score=min_score,
                         metadata_filter=metadata_filter,
                     )
+
+                    if response.log:
+                        telemetry_logger.log_retrieval(response.log)
+
+                st.session_state.chat_history.append(
+                    {
+                        "question": question,
+                        "retrieval_question": retrieval_question,
+                        "answer": response.answer,
+                        "answer_status": response.answer_status,
+                        "retrieval_confidence": response.retrieval_confidence,
+                    }
+                )
 
                 st.subheader("Answer")
                 st.markdown(response.answer if response.answer else "*No answer generated.*")
@@ -622,6 +742,7 @@ if ask_btn:
                 )
 
                 st.metric("Retrieved Chunks", len(response.sources))
+                st.write("**Requested Retrieval Depth:**", effective_top_k)
 
                 if selected_retrieval_documents:
                     st.write(
@@ -686,6 +807,39 @@ if ask_btn:
 
         except Exception as e:
             qa_status.error(f"Question answering failed: {e}")
+
+# --- Conversation History ---
+if st.session_state.chat_history:
+    st.write("---")
+    st.header("Conversation History")
+
+    for i, exchange in enumerate(
+        reversed(st.session_state.chat_history),
+        start=1,
+    ):
+        with st.expander(f"Conversation Turn {i}", expanded=False):
+
+            st.write("**Question:**")
+            st.write(exchange["question"])
+
+            retrieval_question = exchange.get("retrieval_question")
+
+            if retrieval_question and retrieval_question != exchange["question"]:
+                st.write("**Interpreted question:**")
+                st.write(retrieval_question)
+
+            st.write("**Answer:**")
+            st.write(exchange["answer"])
+
+            st.write(
+                "**Answer Status:**",
+                exchange["answer_status"],
+            )
+
+            st.write(
+                "**Retrieval Confidence:**",
+                exchange["retrieval_confidence"],
+            )
 
 st.markdown(
     """

@@ -66,9 +66,12 @@ class AnswerGenerator:
         # Instruction for the model
         system_prompt = (
             "You are an expert assistant. Use ONLY the provided context to answer the user's question. "
+            "Answer the user's specific question directly first, using the most concise supported answer available from the retrieved context. "
+            "Do not begin with unnecessary background information if the answer can be stated clearly and briefly. "
+            "After the direct answer, provide brief supporting context only if helpful. "
             "If the context does not provide enough information, reply: "
             "\"I'm sorry, I don't have enough information to answer that question based on the provided context.\" "
-            "When the user asks where information came from, refer to the document name and page number if available, not only the chunk number."
+            "When the user asks where information came from, refer to the document name and page number if available, not only the chunk number. "
             "Do NOT use any outside knowledge or invent any information."
         )
 
