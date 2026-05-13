@@ -16,6 +16,9 @@ class SearchResult(BaseModel):
     id: str
     text: str
     score: float
+    vector_score: float | None = None
+    rerank_bonus: float | None = None
+    final_score: float | None = None
     metadata: dict = Field(default_factory=dict)
 
 
@@ -153,7 +156,9 @@ class VectorStore:
                     id=ids[i],
                     text=documents[i],
                     score=sim_score,
-                    metadata=metadatas[i] if isinstance(metadatas[i], dict) else {}
+                    vector_score=sim_score,
+                    final_score=sim_score,
+                    metadata=metadatas[i] if isinstance(metadatas[i], dict) else {},
                 )
             except ValidationError:
                 # Skip invalid result

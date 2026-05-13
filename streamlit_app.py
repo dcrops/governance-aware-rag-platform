@@ -34,6 +34,7 @@ from app.document_management.document_registry import (
     delete_client_registry,
 )
 from app.telemetry.telemetry_logger import TelemetryLogger
+from app.reranking.simple_reranker import SimpleReranker
 
 
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
@@ -43,6 +44,8 @@ st.set_page_config(page_title="Client RAG UI", layout="wide")
 persist_dir = PERSIST_DIR
 
 rewrite_client = OpenAI()
+
+domain_profile = "tgbc"
 
 def build_contextual_question(question: str, chat_history: list[dict]) -> str:
     if not chat_history:
@@ -90,7 +93,23 @@ Standalone question:
 
     return response.choices[0].message.content.strip()
 
-def get_effective_top_k(question: str, selected_top_k: int) -> int:
+def get_effective_top_k(
+    question: str,
+    selected_top_k: int,
+    retrieval_mode: str,
+    document_count: int,
+) -> int:
+    if retrieval_mode == "Standard chunk retrieval":
+        return selected_top_k
+
+    broad_top_k = max(
+        selected_top_k,
+        min(document_count * 5, 50),
+    )
+
+    if retrieval_mode == "Broad retrieval":
+        return broad_top_k
+
     broad_query_terms = [
         "all",
         "every",
@@ -106,15 +125,26 @@ def get_effective_top_k(question: str, selected_top_k: int) -> int:
 
     question_lower = question.lower()
 
-    is_broad_query = any(
-        term in question_lower
-        for term in broad_query_terms
-    )
-
-    if is_broad_query:
-        return max(selected_top_k, 15)
+    if any(term in question_lower for term in broad_query_terms):
+        return broad_top_k
 
     return selected_top_k
+
+def is_aggregation_question(question: str) -> bool:
+    aggregation_terms = [
+        "how many",
+        "count",
+        "list all",
+        "all the",
+        "all documents",
+        "across",
+        "mentioned in all",
+    ]
+
+    question_lower = question.lower()
+
+    return any(term in question_lower for term in aggregation_terms)
+
 
 # --- Session Conversation State ---
 if "chat_history" not in st.session_state:
@@ -270,6 +300,17 @@ min_score = st.sidebar.slider(
     max_value=1.0,
     value=DEFAULT_MIN_SCORE,
     step=0.01,
+)
+
+retrieval_mode = st.sidebar.selectbox(
+    "Retrieval mode",
+    options=[
+        "Standard chunk retrieval",
+        "Broad retrieval",
+        "Auto retrieval",
+        "Document-level retrieval",
+    ],
+    index=0,
 )
 
 # --- Indexed Documents Registry UI ---
@@ -661,10 +702,13 @@ if ask_btn:
                 embedding_client = EmbeddingClient()
                 query_rewriter = QueryRewriter()
 
+                reranker = SimpleReranker()
+
                 retriever = Retriever(
                     embedding_client=embedding_client,
                     vector_store=vector_store,
                     query_rewriter=query_rewriter,
+                    reranker=reranker,
                 )
 
                 answer_generator = AnswerGenerator()
@@ -689,6 +733,12 @@ if ask_btn:
                         ]
                     }
 
+                if retrieval_mode == "Document-level retrieval" and not selected_retrieval_documents:
+                    qa_status.error(
+                        "Document-level retrieval requires one or more documents to be selected in Search scope."
+                    )
+                    st.stop()
+
                 with st.spinner("Retrieving..."):
                     retrieval_question = build_contextual_question(
                         question=question,
@@ -698,13 +748,26 @@ if ask_btn:
                     effective_top_k = get_effective_top_k(
                         question=retrieval_question,
                         selected_top_k=top_k,
+                        retrieval_mode=retrieval_mode,
+                        document_count=document_count,
+                    )
+
+                    answer_mode = (
+                        "aggregation"
+                        if is_aggregation_question(retrieval_question)
+                        else "standard"
                     )
 
                     response = pipeline.answer_question(
-                        retrieval_question,
+                        question=question,
+                        retrieval_question=retrieval_question,
                         top_k=effective_top_k,
                         min_score=min_score,
                         metadata_filter=metadata_filter,
+                        answer_mode=answer_mode,
+                        domain_profile=domain_profile,
+                        retrieval_mode=retrieval_mode,
+                        selected_documents=selected_retrieval_documents,
                     )
 
                     if response.log:
@@ -717,8 +780,26 @@ if ask_btn:
                         "answer": response.answer,
                         "answer_status": response.answer_status,
                         "retrieval_confidence": response.retrieval_confidence,
+
+                        "sources": response.sources,
+                        "retrieval_mode": retrieval_mode,
+                        "retrieval_scope": selected_retrieval_documents,
+                        "retrieved_chunks": len(response.sources),
+                        "requested_depth": effective_top_k,
+
+                        "telemetry": (
+                            {
+                                "original_query": response.log.original_query,
+                                "retrieval_query": response.log.retrieval_query,
+                                "scores": response.log.scores,
+                            }
+                            if response.log
+                            else None
+                        ),
                     }
                 )
+
+                st.write("**Grounding Check:**", response.log.grounding_check)
 
                 st.subheader("Answer")
                 st.markdown(response.answer if response.answer else "*No answer generated.*")
@@ -752,6 +833,17 @@ if ask_btn:
                 else:
                     st.write("**Retrieval Scope:** All indexed documents")
 
+                st.write("**Retrieval Strategy:**", retrieval_mode)
+
+                if retrieval_mode == "Document-level retrieval":
+                    selected_doc_count = len(selected_retrieval_documents)
+                    chunks_per_document = max(1, effective_top_k // selected_doc_count)
+
+                    st.write(
+                        "**Document-Level Retrieval Detail:**",
+                        f"{chunks_per_document} chunk(s) retrieved per selected document.",
+                    )
+
                 st.write("**Sources:**")
 
                 if response.sources:
@@ -783,7 +875,22 @@ if ask_btn:
                         else:
                             label_parts.append(f"chunk {source.chunk_index}")
 
-                        label_parts.append(f"score {source.score:.3f}")
+                        score_parts = []
+
+                        if source.vector_score is not None:
+                            score_parts.append(f"vector {source.vector_score:.3f}")
+
+                        if source.rerank_bonus is not None:
+                            score_parts.append(f"bonus {source.rerank_bonus:.3f}")
+
+                        if source.final_score is not None:
+                            score_parts.append(f"final {source.final_score:.3f}")
+
+                        elif source.score is not None:
+                            score_parts.append(f"score {source.score:.3f}")
+
+                        if score_parts:
+                            label_parts.append(" | ".join(score_parts))
 
                         label = " | ".join(label_parts)
 
@@ -813,33 +920,94 @@ if st.session_state.chat_history:
     st.write("---")
     st.header("Conversation History")
 
-    for i, exchange in enumerate(
-        reversed(st.session_state.chat_history),
-        start=1,
-    ):
-        with st.expander(f"Conversation Turn {i}", expanded=False):
+    for i, turn in enumerate(st.session_state.chat_history, start=1):
 
-            st.write("**Question:**")
-            st.write(exchange["question"])
+        turn_label = (
+            "Conversation Start"
+            if i == 1
+            else f"Conversation Turn {i}"
+        )
 
-            retrieval_question = exchange.get("retrieval_question")
+        with st.expander(turn_label):
 
-            if retrieval_question and retrieval_question != exchange["question"]:
-                st.write("**Interpreted question:**")
-                st.write(retrieval_question)
+            st.markdown("**Question:**")
+            st.write(turn["question"])
 
-            st.write("**Answer:**")
-            st.write(exchange["answer"])
+            if turn.get("retrieval_question"):
+                st.markdown("**Interpreted question:**")
+                st.write(turn["retrieval_question"])
 
-            st.write(
-                "**Answer Status:**",
-                exchange["answer_status"],
+            st.markdown("**Answer:**")
+            st.write(turn["answer"])
+
+            st.markdown(f"**Answer Status:** {turn['answer_status']}")
+            st.markdown(
+                f"**Retrieval Confidence:** {turn['retrieval_confidence']}"
             )
+            
+            st.markdown("**Retrieval Details:**")
+            st.write("**Retrieval Strategy:**", turn.get("retrieval_mode", "Unknown"))
+            st.write("**Retrieved Chunks:**", turn.get("retrieved_chunks", "Unknown"))
+            st.write("**Requested Retrieval Depth:**", turn.get("requested_depth", "Unknown"))
 
-            st.write(
-                "**Retrieval Confidence:**",
-                exchange["retrieval_confidence"],
-            )
+            retrieval_scope = turn.get("retrieval_scope")
+
+            if retrieval_scope:
+                st.write("**Retrieval Scope:**", ", ".join(retrieval_scope))
+            else:
+                st.write("**Retrieval Scope:** All indexed documents")
+
+            sources = turn.get("sources", [])
+
+            if sources:
+                st.markdown("**Sources:**")
+
+                for source in sources:
+                    label_parts = [source.file_name]
+
+                    if source.metadata:
+                        section_title = source.metadata.get("section_title")
+                        page_number = source.metadata.get("page_number")
+                        source_chunking_strategy = source.metadata.get("chunking_strategy")
+
+                        if section_title:
+                            if len(section_title) > 50:
+                                section_title = section_title[:47] + "..."
+                            label_parts.append(f"section: {section_title}")
+
+                        elif page_number is not None:
+                            label_parts.append(f"page {page_number}")
+
+                        else:
+                            label_parts.append(f"chunk {source.chunk_index}")
+
+                        if source_chunking_strategy:
+                            label_parts.append(f"strategy: {source_chunking_strategy}")
+
+                    score_parts = []
+
+                    if source.vector_score is not None:
+                        score_parts.append(f"vector {source.vector_score:.3f}")
+
+                    if source.rerank_bonus is not None:
+                        score_parts.append(f"bonus {source.rerank_bonus:.3f}")
+
+                    if source.final_score is not None:
+                        score_parts.append(f"final {source.final_score:.3f}")
+
+                    elif source.score is not None:
+                        score_parts.append(f"score {source.score:.3f}")
+
+                    if score_parts:
+                        label_parts.append(" | ".join(score_parts))
+
+                    label = " | ".join(label_parts)
+
+                    with st.expander(label):
+                        if source.text_preview:
+                            st.write(source.text_preview)
+                        else:
+                            st.write("_No preview available._")
 
 st.markdown(
     """

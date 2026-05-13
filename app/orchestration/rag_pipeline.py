@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
+
 from app.retrieval.retriever import Retriever
 from app.generation.answer_generator import AnswerGenerator
 from app.models.rag_response import RAGResponse
 from app.models.citation import Citation
-from datetime import datetime, timezone
 from app.models.retrieval_log import RetrievalLog
+
 
 class RAGPipeline:
     """
@@ -15,13 +17,6 @@ class RAGPipeline:
         retriever: Retriever,
         answer_generator: AnswerGenerator,
     ):
-        """
-        Initialize the RAGPipeline with required components.
-
-        Args:
-            retriever: An object with a .retrieve(query: str, top_k: int) -> List[SearchResult] interface.
-            answer_generator: An object with a .generate_answer(question: str, search_results: List[SearchResult]) -> str interface.
-        """
         self.retriever = retriever
         self.answer_generator = answer_generator
 
@@ -40,25 +35,49 @@ class RAGPipeline:
 
         return "LOW"
 
+    def retrieve_per_document(
+        self,
+        question: str,
+        document_names: list[str],
+        chunks_per_document: int = 3,
+        min_score: float | None = None,
+    ):
+        """
+        Retrieve top chunks separately per document,
+        then combine all results together.
+        """
+        combined_results = []
+
+        for document_name in document_names:
+            metadata_filter = {
+                "file_name": document_name
+            }
+
+            retrieval_result = self.retriever.retrieve(
+                question,
+                top_k=chunks_per_document,
+                min_score=min_score,
+                metadata_filter=metadata_filter,
+            )
+
+            combined_results.extend(retrieval_result.search_results)
+
+        return combined_results
+
     def answer_question(
         self,
         question: str,
+        retrieval_question: str | None = None,
         top_k: int = 5,
         min_score: float | None = None,
-        metadata_filter: dict | None = None
+        metadata_filter: dict | None = None,
+        answer_mode: str = "standard",
+        domain_profile: str | None = None,
+        retrieval_mode: str = "Standard chunk retrieval",
+        selected_documents: list[str] | None = None,
     ) -> RAGResponse:
         """
-        Retrieve relevant context and generate a grounded answer to the user question.
-
-        Args:
-            question (str): The user's question.
-            top_k (int, optional): Number of top results to retrieve. Default is 5.
-
-        Returns:
-            str: Answer generated using retrieved context.
-
-        Raises:
-            ValueError: If question is not a non-empty string or top_k is not a positive integer.
+        Retrieve relevant context and generate a grounded answer.
         """
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question must be a non-empty string.")
@@ -70,15 +89,36 @@ class RAGPipeline:
             if not isinstance(min_score, (int, float)) or min_score < 0:
                 raise ValueError("min_score must be a non-negative number.")
 
-        # Retrieve relevant documents
-        retrieval_result = self.retriever.retrieve(
-            question,
-            top_k=top_k,
-            min_score=min_score,
-            metadata_filter=metadata_filter,
-        )
+        query_for_retrieval = retrieval_question or question
+        retrieval_result = None
 
-        search_results = retrieval_result.search_results
+        if retrieval_mode == "Document-level retrieval":
+            if not selected_documents:
+                raise ValueError(
+                    "Document-level retrieval requires one or more selected documents."
+                )
+
+            chunks_per_document = max(
+                1,
+                top_k // len(selected_documents),
+            )
+
+            search_results = self.retrieve_per_document(
+                question=query_for_retrieval,
+                document_names=selected_documents,
+                chunks_per_document=chunks_per_document,
+                min_score=min_score,
+            )
+
+        else:
+            retrieval_result = self.retriever.retrieve(
+                query_for_retrieval,
+                top_k=top_k,
+                min_score=min_score,
+                metadata_filter=metadata_filter,
+            )
+
+            search_results = retrieval_result.search_results
 
         if not search_results:
             fallback_answer = (
@@ -88,22 +128,16 @@ class RAGPipeline:
 
             log = RetrievalLog(
                 question=question,
-
-                original_query=retrieval_result.original_query,
-                retrieval_query=retrieval_result.retrieval_query,
-
+                original_query=question,
+                retrieval_query=query_for_retrieval,
                 retrieved_chunk_ids=[],
                 scores=[],
-
                 answer=fallback_answer,
-
                 answer_status="NO_RESULTS",
                 retrieval_confidence="NONE",
-
                 requested_retrieval_depth=top_k,
-
                 documents_used=[],
-
+                grounding_check="SKIPPED",
                 timestamp=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -118,7 +152,12 @@ class RAGPipeline:
 
         retrieval_confidence = self._calculate_confidence(search_results)
 
-        answer = self.answer_generator.generate_answer(question, search_results)
+        answer, grounding_check = self.answer_generator.generate_answer(
+            question=question,
+            search_results=search_results,
+            answer_mode=answer_mode,
+            domain_profile=domain_profile,
+        )
 
         answer_status = (
             "INSUFFICIENT_EVIDENCE"
@@ -132,42 +171,41 @@ class RAGPipeline:
                 file_name=result.metadata.get("file_name"),
                 chunk_index=result.metadata.get("chunk_index"),
                 score=result.score,
+                vector_score=result.vector_score,
+                rerank_bonus=result.rerank_bonus,
+                final_score=result.final_score,
                 metadata=result.metadata,
                 text_preview=result.text[:300],
             )
             for result in search_results
         ]
 
+        documents_used = sorted(
+            {
+                result.metadata.get("file_name")
+                for result in search_results
+                if result.metadata.get("file_name")
+            }
+        )
+
         log = RetrievalLog(
             question=question,
-            original_query=retrieval_result.original_query,
-            retrieval_query=retrieval_result.retrieval_query,
-
+            original_query=question,
+            retrieval_query=query_for_retrieval,
             retrieved_chunk_ids=[
                 result.id
                 for result in search_results
             ],
-
             scores=[
                 result.score
                 for result in search_results
             ],
-
             answer=answer,
-
             answer_status=answer_status,
             retrieval_confidence=retrieval_confidence,
-
+            grounding_check=grounding_check,
             requested_retrieval_depth=top_k,
-
-            documents_used=list(
-                {
-                    result.metadata.get("file_name")
-                    for result in search_results
-                    if result.metadata.get("file_name")
-                }
-            ),
-
+            documents_used=documents_used,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 

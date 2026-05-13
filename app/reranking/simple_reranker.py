@@ -27,10 +27,16 @@ class SimpleReranker:
             shared_tokens = query_tokens & result_tokens
 
             keyword_overlap_bonus = len(shared_tokens) * 0.05
-            final_score = result.score + keyword_overlap_bonus
+            base_score = result.final_score or result.score
+
+            final_score = base_score + keyword_overlap_bonus
 
             reranked_result = result.model_copy(
-                update={"score": final_score}
+                update={
+                    "score": final_score,
+                    "final_score": final_score,
+                    "rerank_bonus": keyword_overlap_bonus,
+                }
             )
             reranked_results.append(reranked_result)
 

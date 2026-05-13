@@ -1,9 +1,17 @@
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 import json
 import os
 from datetime import datetime, timezone
+import pandas as pd
 
 # from tests.evaluation_queries import EVALUATION_CASES
 from tests.evaluation_queries_run_sheet_pdf import EVALUATION_CASES
+from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME
 
 from app.ingestion.ingest import ingest_document
 from app.chunking.chunker import (
@@ -19,11 +27,20 @@ from app.retrieval.retriever import Retriever
 from app.orchestration.rag_pipeline import RAGPipeline
 from app.generation.answer_generator import AnswerGenerator
 from app.telemetry.telemetry_logger import TelemetryLogger
+from app.reranking.simple_reranker import SimpleReranker
 
 
 REWRITE_STRATEGY = "rule"  # options: "none", "rule", "llm"
 CHUNKING_STRATEGY = "delimiter"  # options: "character", "page", "heading", "delimiter"
 DELIMITER = "BREAK"  # None
+
+RETRIEVAL_MODE = "Standard chunk retrieval"
+RERANKER_ENABLED = True
+MIN_SCORE = 0.35
+TOP_K = 5
+
+EVAL_CSV_PATH = "data/evaluation/rag_eval_suite_v2.csv"
+USE_CSV_EVALUATION = True
 
 
 def build_query_rewriter(strategy: str):
@@ -61,6 +78,32 @@ def build_chunks(doc, strategy: str):
 
     raise ValueError(f"Unknown chunking strategy: {strategy}")
 
+def is_aggregation_question(question: str) -> bool:
+    aggregation_terms = [
+        "how many",
+        "count",
+        "list all",
+        "all the",
+        "all documents",
+        "across",
+        "mentioned in all",
+    ]
+
+    return any(term in question.lower() for term in aggregation_terms)
+
+
+def is_comparison_question(question: str) -> bool:
+    comparison_terms = [
+        "difference between",
+        "compare",
+        "versus",
+        "vs",
+        "how does",
+        "differ",
+    ]
+
+    return any(term in question.lower() for term in comparison_terms)
+
 def main():
     total_queries = 0
     document_hit_count = 0
@@ -71,52 +114,77 @@ def main():
     answer_status_eval_count = 0
     answer_status_match_count = 0
     answer_status_failures = []
+    grounding_pass_count = 0
+    grounding_fail_count = 0
+    grounding_skipped_count = 0
 
     # file_path = "data/raw/sample.txt"
-    file_path = "data/evaluation_docs/run_sheet_style.pdf"
+    # file_path = "data/evaluation_docs/run_sheet_style.pdf"
 
-    print("1. Ingesting document...")
-    doc = ingest_document(file_path)
-    print(f"   -> Document ID: {doc.doc_id}")
+    # print("1. Ingesting document...")
+    # doc = ingest_document(file_path)
+    # print(f"   -> Document ID: {doc.doc_id}")
 
-    print(f"2. Chunking document using strategy: {CHUNKING_STRATEGY}")
-    chunks = build_chunks(doc, CHUNKING_STRATEGY)
-    print(f"   -> Total Chunks: {len(chunks)}")
-    if not chunks:
-        raise RuntimeError("No chunks created from document.")
+    # print(f"2. Chunking document using strategy: {CHUNKING_STRATEGY}")
+    # chunks = build_chunks(doc, CHUNKING_STRATEGY)
+    # print(f"   -> Total Chunks: {len(chunks)}")
+    # if not chunks:
+    #     raise RuntimeError("No chunks created from document.")
 
-    print("3. Initializing embedding client...")
+    # print("3. Initializing embedding client...")
+    # embed_client = EmbeddingClient()
+
+    # print("4. Embedding chunk texts...")
+    # chunk_texts = [chunk.text for chunk in chunks]
+    # embeddings = embed_client.embed_texts(chunk_texts)
+    # print(f"   -> Got {len(embeddings)} embeddings")
+
+    # if len(chunks) != len(embeddings):
+    #     raise RuntimeError("Mismatch between chunks and embeddings.")
+
+    # print("5. Creating VectorRecords...")
+    # records = [
+    #     VectorRecord(chunk=chunk, embedding=embedding)
+    #     for chunk, embedding in zip(chunks, embeddings)
+    # ]
+    # print(f"   -> Created {len(records)} VectorRecords")
+
+    # print("6. Initializing VectorStore...")
+    # vector_store = VectorStore()
+    # print("   -> Upserting records...")
+    # vector_store.upsert_records(records)
+
+    print("1. Initializing embedding client...")
     embed_client = EmbeddingClient()
 
-    print("4. Embedding chunk texts...")
-    chunk_texts = [chunk.text for chunk in chunks]
-    embeddings = embed_client.embed_texts(chunk_texts)
-    print(f"   -> Got {len(embeddings)} embeddings")
+    print("2. Connecting to existing VectorStore index...")
+    vector_store = VectorStore(
+        persist_dir=PERSIST_DIR,
+        #collection_name=f"client_{DEFAULT_CLIENT_NAME}",
+        collection_name=f"client_RMIT_Demo",
+    )
 
-    if len(chunks) != len(embeddings):
-        raise RuntimeError("Mismatch between chunks and embeddings.")
+    # print(vector_store._collection.count())
 
-    print("5. Creating VectorRecords...")
-    records = [
-        VectorRecord(chunk=chunk, embedding=embedding)
-        for chunk, embedding in zip(chunks, embeddings)
-    ]
-    print(f"   -> Created {len(records)} VectorRecords")
+    indexed_count = vector_store.count()
+    print(f"   -> Indexed chunks found: {indexed_count}")
 
-    print("6. Initializing VectorStore...")
-    vector_store = VectorStore()
-    print("   -> Upserting records...")
-    vector_store.upsert_records(records)
-    print(f"   -> Upserted {len(records)} records")
+    if indexed_count == 0:
+        raise RuntimeError(
+            "No indexed chunks found. Please index documents in the Streamlit app first."
+        )
 
-    print("7. Initializing Retriever...")
+    print("3. Initializing Retriever...")
     query_rewriter = build_query_rewriter(REWRITE_STRATEGY)
     print(f"   -> Query rewrite strategy: {REWRITE_STRATEGY}")
+
+    reranker = SimpleReranker() if RERANKER_ENABLED else None
 
     retriever = Retriever(
         embedding_client=embed_client,
         vector_store=vector_store,
         query_rewriter=query_rewriter,
+        reranker=reranker,
     )
 
     answer_generator = AnswerGenerator()
@@ -128,13 +196,69 @@ def main():
 
     telemetry_logger = TelemetryLogger()
 
-    print("8. Running evaluation queries...")
+    print("4. Running evaluation queries...")
 
-    for idx, case in enumerate(EVALUATION_CASES, start=1):
+    if USE_CSV_EVALUATION:
+        df = pd.read_csv(EVAL_CSV_PATH)
+        evaluation_cases = df.to_dict(orient="records")
+    else:
+        evaluation_cases = EVALUATION_CASES
+
+    for idx, case in enumerate(evaluation_cases, start=1):
         question = case["question"]
-        expected_documents = case.get("expected_documents", [])
-        expected_topics = case["expected_topics"]
+
+        context_type = str(case.get("context_type", "")).strip().lower()
+
+        if context_type == "follow_up":
+            print(f"Skipping {case.get('test_id')} — follow-up tests not automated yet.")
+            continue
+
+        retrieval_mode = str(
+            case.get("retrieval_mode", RETRIEVAL_MODE)
+        ).strip()
+
+        search_scope = str(case.get("search_scope", "")).split(";")
+
+        search_scope = [
+            doc.strip()
+            for doc in search_scope
+            if doc.strip()
+            and doc.strip().lower() not in ["nan", "all", "auto"]
+        ]
+
+        metadata_filter = None
+
+        if retrieval_mode != "Document-level retrieval":
+            if len(search_scope) == 1:
+                metadata_filter = {
+                    "file_name": search_scope[0]
+                }
+
+            elif len(search_scope) > 1:
+                metadata_filter = {
+                    "$or": [
+                        {"file_name": doc_name}
+                        for doc_name in search_scope
+                    ]
+                }
+
+        expected_documents = str(case.get("expected_documents", "")).split(";")
+        expected_documents = [
+            doc.strip()
+            for doc in expected_documents
+            if doc.strip() and doc.strip().lower() != "nan"
+        ]
+
+        expected_topics = str(case.get("expected_answer_contains", "")).split(";")
+        expected_topics = [
+            topic.strip()
+            for topic in expected_topics
+            if topic.strip() and topic.strip().lower() != "nan"
+        ]
+
         expected_answer_status = case.get("expected_answer_status")
+        if expected_answer_status != expected_answer_status:  # handles NaN
+            expected_answer_status = None
 
         print("\n" + "=" * 80)
         print(f"Evaluation Query {idx}: {question}")
@@ -144,17 +268,43 @@ def main():
         for topic in expected_topics:
             print(f"- {topic}")
 
+        print(f"Retrieval Mode Used: {retrieval_mode}")
+        print(f"Search Scope Used: {search_scope}")
+        print(f"Metadata Filter Used: {metadata_filter}")
+
+        if is_aggregation_question(question):
+            answer_mode = "aggregation"
+        elif is_comparison_question(question):
+            answer_mode = "comparison"
+        else:
+            answer_mode = "standard"
+
+        print(f"Answer Mode Used: {answer_mode}")
+
         response = pipeline.answer_question(
             question,
-            top_k=5,
-            min_score=0.35,
-            metadata_filter={"file_name": doc.metadata.get("file_name")},
+            top_k=TOP_K,
+            min_score=MIN_SCORE,
+            metadata_filter=metadata_filter,
+            retrieval_mode=retrieval_mode,
+            selected_documents=search_scope,
+            answer_mode=answer_mode,
         )
 
         print("\nAnswer:")
         print(response.answer)
         print(f"\nRetrieval Confidence: {response.retrieval_confidence}")
+        print(f"Grounding Check: {response.log.grounding_check}")
         print(f"Answer Status: {response.answer_status}")
+
+        if response.log.grounding_check == "PASS":
+            grounding_pass_count += 1
+
+        elif response.log.grounding_check == "FAIL":
+            grounding_fail_count += 1
+
+        elif response.log.grounding_check == "SKIPPED":
+            grounding_skipped_count += 1
 
         print("\nSources:")
         for source in response.sources:
@@ -201,10 +351,10 @@ def main():
         print(f"Top Score: {top_score:.3f}")
         print(f"Average Score: {average_score:.3f}")
 
-        retrieved_text = ""
+        evaluation_text = response.answer.lower()
 
         if response.retrieval_result:
-            retrieved_text = " ".join(
+            evaluation_text += " " + " ".join(
                 result.text.lower()
                 for result in response.retrieval_result.search_results
             )
@@ -212,13 +362,13 @@ def main():
         matched_topics = [
             topic
             for topic in expected_topics
-            if topic.lower() in retrieved_text
+            if topic.lower() in evaluation_text
         ]
 
         missing_topics = [
             topic
             for topic in expected_topics
-            if topic.lower() not in retrieved_text
+            if topic.lower() not in evaluation_text
         ]
 
         topic_match_rate = None
@@ -353,6 +503,10 @@ def main():
     "answer_status_eval_count": answer_status_eval_count,
     "answer_status_match_rate": answer_status_match_rate,
     "answer_status_failures": answer_status_failures,
+    "retrieval_mode": RETRIEVAL_MODE,
+    "reranker_enabled": RERANKER_ENABLED,
+    "min_score": MIN_SCORE,
+    "top_k": TOP_K,
 }
 
     output_dir = "logs/evaluation_runs"

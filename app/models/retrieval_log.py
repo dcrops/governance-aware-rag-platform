@@ -27,3 +27,5 @@ class RetrievalLog(BaseModel):
     documents_used: List[str] = []
 
     timestamp: str
+
+    grounding_check: str | None = None  #   PASS, FAIL, SKIPPED
