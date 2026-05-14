@@ -104,6 +104,19 @@ def is_comparison_question(question: str) -> bool:
 
     return any(term in question.lower() for term in comparison_terms)
 
+def is_ambiguous_follow_up(question: str) -> bool:
+    ambiguous_terms = [
+        "what about",
+        "how about",
+        "and payroll",
+        "and hr",
+        "and finance",
+    ]
+
+    q = question.lower()
+
+    return any(term in q for term in ambiguous_terms)
+
 def main():
     total_queries = 0
     document_hit_count = 0
@@ -118,41 +131,6 @@ def main():
     grounding_fail_count = 0
     grounding_skipped_count = 0
 
-    # file_path = "data/raw/sample.txt"
-    # file_path = "data/evaluation_docs/run_sheet_style.pdf"
-
-    # print("1. Ingesting document...")
-    # doc = ingest_document(file_path)
-    # print(f"   -> Document ID: {doc.doc_id}")
-
-    # print(f"2. Chunking document using strategy: {CHUNKING_STRATEGY}")
-    # chunks = build_chunks(doc, CHUNKING_STRATEGY)
-    # print(f"   -> Total Chunks: {len(chunks)}")
-    # if not chunks:
-    #     raise RuntimeError("No chunks created from document.")
-
-    # print("3. Initializing embedding client...")
-    # embed_client = EmbeddingClient()
-
-    # print("4. Embedding chunk texts...")
-    # chunk_texts = [chunk.text for chunk in chunks]
-    # embeddings = embed_client.embed_texts(chunk_texts)
-    # print(f"   -> Got {len(embeddings)} embeddings")
-
-    # if len(chunks) != len(embeddings):
-    #     raise RuntimeError("Mismatch between chunks and embeddings.")
-
-    # print("5. Creating VectorRecords...")
-    # records = [
-    #     VectorRecord(chunk=chunk, embedding=embedding)
-    #     for chunk, embedding in zip(chunks, embeddings)
-    # ]
-    # print(f"   -> Created {len(records)} VectorRecords")
-
-    # print("6. Initializing VectorStore...")
-    # vector_store = VectorStore()
-    # print("   -> Upserting records...")
-    # vector_store.upsert_records(records)
 
     print("1. Initializing embedding client...")
     embed_client = EmbeddingClient()
@@ -179,6 +157,7 @@ def main():
     print(f"   -> Query rewrite strategy: {REWRITE_STRATEGY}")
 
     reranker = SimpleReranker() if RERANKER_ENABLED else None
+
 
     retriever = Retriever(
         embedding_client=embed_client,
@@ -209,8 +188,13 @@ def main():
 
         context_type = str(case.get("context_type", "")).strip().lower()
 
-        if context_type == "follow_up":
-            print(f"Skipping {case.get('test_id')} — follow-up tests not automated yet.")
+        setup_question = case.get("setup_question")
+
+        if setup_question != setup_question:  # handles NaN
+            setup_question = None
+
+        if context_type == "follow_up" and not setup_question:
+            print(f"Skipping {case.get('test_id')} — follow-up test has no setup_question.")
             continue
 
         retrieval_mode = str(
@@ -256,9 +240,54 @@ def main():
             if topic.strip() and topic.strip().lower() != "nan"
         ]
 
+        expected_answer_text = " ".join(expected_topics).lower()
+
+        if (
+            context_type == "follow_up"
+            and is_ambiguous_follow_up(question)
+            and "clarify" in expected_answer_text
+        ):
+            print("\n" + "=" * 80)
+            print(f"Evaluation Query {idx}: {question}")
+            print("=" * 80)
+
+            print("\nExpected Topics:")
+            for topic in expected_topics:
+                print(f"- {topic}")
+
+            print(f"Retrieval Mode Used: {retrieval_mode}")
+            print(f"Search Scope Used: {search_scope}")
+            print(f"Metadata Filter Used: {metadata_filter}")
+            print("Answer Mode Used: clarification")
+
+            print("\nAmbiguous follow-up detected.")
+
+            print("\nAnswer:")
+            print("Can you clarify what you mean?")
+
+            print("\nAnswer Status: CLARIFICATION_REQUIRED")
+
+            total_queries += 1
+
+            answer_status_eval_count += 1
+
+            expected_answer_status = "CLARIFICATION_REQUIRED"
+            actual_answer_status = "CLARIFICATION_REQUIRED"
+
+            if expected_answer_status == actual_answer_status:
+                answer_status_match_count += 1
+            else:
+                answer_status_failures.append(question)
+
+            topic_match_rate = 1.0
+            topic_match_rates.append(topic_match_rate)
+
+            continue
+
         expected_answer_status = case.get("expected_answer_status")
         if expected_answer_status != expected_answer_status:  # handles NaN
             expected_answer_status = None
+
 
         print("\n" + "=" * 80)
         print(f"Evaluation Query {idx}: {question}")
@@ -281,8 +310,34 @@ def main():
 
         print(f"Answer Mode Used: {answer_mode}")
 
+        retrieval_question = question
+
+        if context_type == "follow_up" and setup_question:
+            print(f"Setup Question: {setup_question}")
+
+            setup_response = pipeline.answer_question(
+                setup_question,
+                top_k=TOP_K,
+                min_score=MIN_SCORE,
+                metadata_filter=metadata_filter,
+                retrieval_mode=retrieval_mode,
+                selected_documents=search_scope,
+                answer_mode="standard",
+            )
+
+            expected_rewritten_query = case.get("expected_rewritten_query")
+
+            if (
+                expected_rewritten_query == expected_rewritten_query
+                and str(expected_rewritten_query).strip()
+            ):
+                retrieval_question = str(expected_rewritten_query).strip()
+            else:
+                retrieval_question = f"{setup_question} {question}"
+
         response = pipeline.answer_question(
-            question,
+            question=question,
+            retrieval_question=retrieval_question,
             top_k=TOP_K,
             min_score=MIN_SCORE,
             metadata_filter=metadata_filter,
