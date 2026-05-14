@@ -193,10 +193,6 @@ def main():
         if setup_question != setup_question:  # handles NaN
             setup_question = None
 
-        if context_type == "follow_up" and not setup_question:
-            print(f"Skipping {case.get('test_id')} — follow-up test has no setup_question.")
-            continue
-
         retrieval_mode = str(
             case.get("retrieval_mode", RETRIEVAL_MODE)
         ).strip()
@@ -484,6 +480,10 @@ def main():
             print(f"Retrieval Query: {response.log.retrieval_query}")
             print(f"Retrieved IDs: {response.log.retrieved_chunk_ids}")
             print(f"Scores: {[round(score, 3) for score in response.log.scores]}")
+            print(f"Orchestration Intent: {response.log.orchestration_intent}")
+            print(f"Retrieval Strategy: {response.log.retrieval_strategy}")
+            print(f"Orchestration Reasoning: {response.log.orchestration_reasoning}")
+            print(f"Clarification Triggered: {response.log.clarification_triggered}")
 
     print("\n" + "=" * 80)
     print("RETRIEVAL EVALUATION SUMMARY")

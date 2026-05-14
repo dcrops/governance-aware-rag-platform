@@ -29,3 +29,8 @@ class RetrievalLog(BaseModel):
     timestamp: str
 
     grounding_check: str | None = None  #   PASS, FAIL, SKIPPED
+
+    orchestration_intent: str | None = None
+    retrieval_strategy: str | None = None
+    orchestration_reasoning: str | None = None
+    clarification_triggered: bool = False

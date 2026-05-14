@@ -745,6 +745,13 @@ if ask_btn:
                         chat_history=st.session_state.chat_history,
                     )
 
+                    conversation_context = "\n".join(
+                        [
+                            f"Previous question: {turn.get('question', '')}\nPrevious answer: {turn.get('answer', '')}"
+                            for turn in st.session_state.chat_history[-3:]
+                        ]
+                    )
+
                     effective_top_k = get_effective_top_k(
                         question=retrieval_question,
                         selected_top_k=top_k,
@@ -764,10 +771,11 @@ if ask_btn:
                         top_k=effective_top_k,
                         min_score=min_score,
                         metadata_filter=metadata_filter,
-                        answer_mode=answer_mode,
+                        answer_mode=None,
                         domain_profile=domain_profile,
                         retrieval_mode=retrieval_mode,
                         selected_documents=selected_retrieval_documents,
+                        conversation_context=conversation_context,
                     )
 
                     if response.log:
@@ -806,6 +814,11 @@ if ask_btn:
 
                 st.write("**Answer Status**:", response.answer_status)
                 st.write("**Retrieval Confidence**:", response.retrieval_confidence)
+                if response.log:
+                    st.write("**Orchestration Intent:**", response.log.orchestration_intent)
+                    st.write("**Retrieval Strategy:**", response.log.retrieval_strategy)
+                    st.write("**Clarification Triggered:**", response.log.clarification_triggered)
+                    st.write("**Orchestration Reasoning:**", response.log.orchestration_reasoning)
 
                 retrieved_document_names = sorted(
                     {
