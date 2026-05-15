@@ -1,6 +1,7 @@
 import os
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from openai import OpenAI
 
 import streamlit as st
@@ -39,13 +40,76 @@ from app.reranking.simple_reranker import SimpleReranker
 
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 
-st.set_page_config(page_title="Client RAG UI", layout="wide")
+st.set_page_config(page_title="CRC Document Intelligence Copilot", layout="wide")
 
 persist_dir = PERSIST_DIR
 
 rewrite_client = OpenAI()
 
 domain_profile = "tgbc"
+
+APP_TITLE = "Governance-Aware Document Intelligence Copilot"
+APP_SUBTITLE = (
+    "Ask questions across indexed documents with orchestration-aware retrieval, "
+    "grounding checks, source evidence, and safe clarification handling."
+)
+
+LOGO_CANDIDATES = [
+    Path("assets/icononly_transparent_nobuffer.png"),
+    Path("icononly_transparent_nobuffer.png"),
+    Path("/mnt/data/icononly_transparent_nobuffer.png"),
+]
+LOGO_PATH = next((path for path in LOGO_CANDIDATES if path.exists()), None)
+
+st.markdown(
+    """
+    <style>
+        .crc-hero {
+            padding: 1.25rem 1.35rem;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(176,255,31,0.12), rgba(20,180,140,0.06));
+            margin-bottom: 1.25rem;
+        }
+        .crc-hero-logo-wrap {
+            height: 100%;
+            min-height: 165px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .crc-eyebrow {
+            font-size: 0.85rem;
+            color: #B6FF25;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 0.4rem;
+        }
+        .crc-title {
+            font-size: 2rem;
+            line-height: 1.15;
+            font-weight: 800;
+            margin-bottom: 0.4rem;
+        }
+        .crc-subtitle {
+            color: rgba(255,255,255,0.72);
+            font-size: 1rem;
+            max-width: 900px;
+        }
+        .crc-muted {
+            color: rgba(255,255,255,0.65);
+            font-size: 0.92rem;
+        }
+        .crc-footer {
+            color: rgba(255,255,255,0.52);
+            font-size: 0.82rem;
+            margin-top: 2rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 def build_contextual_question(question: str, chat_history: list[dict]) -> str:
     if not chat_history:
@@ -153,6 +217,12 @@ if "chat_history" not in st.session_state:
 telemetry_logger = TelemetryLogger()
 
 # --- Sidebar: Client / KB State ---
+if LOGO_PATH:
+    st.sidebar.image(str(LOGO_PATH), width=68)
+
+st.sidebar.markdown("### Chase Risk & Compliance")
+st.sidebar.caption("Governance-Aware Document Intelligence")
+st.sidebar.divider()
 st.sidebar.header("Client Knowledge Base")
 
 client_name = st.sidebar.text_input("Client Name", value=DEFAULT_CLIENT_NAME)
@@ -209,59 +279,78 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True,
 )
 
-chunking_strategy = st.sidebar.selectbox(
-    "Chunking strategy",
-    options=["character", "delimiter", "page", "heading"],
-    index=0,
+advanced_indexing_controls = st.sidebar.checkbox(
+    "Show advanced indexing controls",
+    value=False,
 )
 
-st.sidebar.caption(
-    "Use character chunking for general documents. Use delimiter chunking when "
-    "documents have clear repeated sections such as 'Section:' or 'Question:'."
-)
-
-chunk_size = None
-chunk_overlap = None
+chunking_strategy = "character"
+chunk_size = 1000
+chunk_overlap = 150
 delimiter = None
 
-if chunking_strategy == "character":
-    chunk_size = st.sidebar.slider(
-        "Chunk size",
-        min_value=250,
-        max_value=4000,
-        value=1000,
-        step=50,
-    )
-
-    chunk_overlap = st.sidebar.slider(
-        "Chunk overlap",
-        min_value=0,
-        max_value=1000,
-        value=150,
-        step=25,
+if advanced_indexing_controls:
+    chunking_strategy = st.sidebar.selectbox(
+        "Chunking strategy",
+        options=["character", "delimiter", "page", "heading"],
+        index=0,
     )
 
     st.sidebar.caption(
-        "Suggested starting points: 800–1200 chars for general documents, "
-        "1500–2500 for long policies/manuals, 500–900 for short notes. "
-        "Overlap is usually 10–20% of chunk size."
+        "Use character chunking for general documents. Use delimiter chunking when "
+        "documents have clear repeated sections such as 'Section:' or 'Question:'."
     )
 
-elif chunking_strategy == "delimiter":
-    delimiter = st.sidebar.text_input(
-        "Delimiter",
-        value="Book Title -",
-    )
+    if chunking_strategy == "character":
+        chunk_size = st.sidebar.slider(
+            "Chunk size",
+            min_value=250,
+            max_value=4000,
+            value=1000,
+            step=50,
+        )
 
-    st.sidebar.caption(
-        "Delimiter chunking keeps repeated sections together. "
-        "Examples: 'Question:', 'Section:', 'Policy:', 'Agenda Item:'."
-    )
+        chunk_overlap = st.sidebar.slider(
+            "Chunk overlap",
+            min_value=0,
+            max_value=1000,
+            value=150,
+            step=25,
+        )
 
-elif chunking_strategy == "heading":
-    st.sidebar.caption(
-        "Heading-aware chunking attempts to preserve sections using detected headings. "
-        "Best for policies, procedures, manuals, and structured documents."
+        st.sidebar.caption(
+            "Suggested starting points: 800–1200 chars for general documents, "
+            "1500–2500 for long policies/manuals, 500–900 for short notes. "
+            "Overlap is usually 10–20% of chunk size."
+        )
+
+    elif chunking_strategy == "delimiter":
+        delimiter = st.sidebar.text_input(
+            "Delimiter",
+            value="Book Title -",
+        )
+
+        st.sidebar.caption(
+            "Delimiter chunking keeps repeated sections together. "
+            "Examples: 'Question:', 'Section:', 'Policy:', 'Agenda Item:'."
+        )
+
+    elif chunking_strategy == "page":
+        st.sidebar.caption(
+            "Page-based chunking keeps PDF pages together. Best when page boundaries "
+            "are meaningful and citations by page are useful."
+        )
+
+    elif chunking_strategy == "heading":
+        st.sidebar.caption(
+            "Heading-aware chunking attempts to preserve sections using detected headings. "
+            "Best for policies, procedures, manuals, and structured documents."
+        )
+
+else:
+    st.sidebar.info(
+        "Indexing uses default character chunking. Enable advanced indexing controls "
+        "to customise chunking strategy, size, overlap, or delimiter."
     )
 
 index_btn = st.sidebar.button("Index Document")
@@ -278,40 +367,57 @@ index_status = st.sidebar.empty()
 # --- Retrieval Controls ---
 st.sidebar.subheader("Retrieval Settings")
 
-selected_retrieval_documents = st.sidebar.multiselect(
-    "Search scope",
-    options=list(registry_documents.keys()),
-    default=[],
+advanced_retrieval_controls = st.sidebar.checkbox(
+    "Show advanced retrieval controls",
+    value=False,
 )
 
-st.sidebar.caption("Leave empty to search across all indexed documents.")
+selected_retrieval_documents = []
 
-top_k = st.sidebar.slider(
-    "Number of chunks to retrieve",
-    min_value=3,
-    max_value=30,
-    value=DEFAULT_TOP_K,
-    step=1,
-)
+top_k = DEFAULT_TOP_K
+min_score = DEFAULT_MIN_SCORE
+retrieval_mode = "Auto retrieval"
 
-min_score = st.sidebar.slider(
-    "Minimum retrieval score",
-    min_value=0.0,
-    max_value=1.0,
-    value=DEFAULT_MIN_SCORE,
-    step=0.01,
-)
+if advanced_retrieval_controls:
+    selected_retrieval_documents = st.sidebar.multiselect(
+        "Search scope",
+        options=list(registry_documents.keys()),
+        default=[],
+    )
 
-retrieval_mode = st.sidebar.selectbox(
-    "Retrieval mode",
-    options=[
-        "Standard chunk retrieval",
-        "Broad retrieval",
-        "Auto retrieval",
-        "Document-level retrieval",
-    ],
-    index=0,
-)
+    st.sidebar.caption("Leave empty to search across all indexed documents.")
+
+    top_k = st.sidebar.slider(
+        "Number of chunks to retrieve",
+        min_value=3,
+        max_value=30,
+        value=DEFAULT_TOP_K,
+        step=1,
+    )
+
+    min_score = st.sidebar.slider(
+        "Minimum retrieval score",
+        min_value=0.0,
+        max_value=1.0,
+        value=DEFAULT_MIN_SCORE,
+        step=0.01,
+    )
+
+    retrieval_mode = st.sidebar.selectbox(
+        "Retrieval mode",
+        options=[
+            "Standard chunk retrieval",
+            "Broad retrieval",
+            "Auto retrieval",
+            "Document-level retrieval",
+        ],
+        index=2,
+    )
+else:
+    st.sidebar.info(
+        "Retrieval is being handled automatically by the orchestration layer."
+    )
+
 
 # --- Indexed Documents Registry UI ---
 st.sidebar.subheader("Indexed Documents")
@@ -661,6 +767,36 @@ if index_btn:
 # --- Main: QA Section ---
 
 # --- Conversation Controls ---
+
+if LOGO_PATH:
+    hero_col_logo, hero_col_text = st.columns([0.10, 0.90], vertical_alignment="center")
+
+    with hero_col_logo:
+        st.image(str(LOGO_PATH), width=84)
+
+    with hero_col_text:
+        st.markdown(
+            f"""
+            <div class="crc-hero">
+                <div class="crc-eyebrow">Chase Risk & Compliance</div>
+                <div class="crc-title">{APP_TITLE}</div>
+                <div class="crc-subtitle">{APP_SUBTITLE}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+else:
+    st.markdown(
+        f"""
+        <div class="crc-hero">
+            <div class="crc-eyebrow">Chase Risk & Compliance</div>
+            <div class="crc-title">{APP_TITLE}</div>
+            <div class="crc-subtitle">{APP_SUBTITLE}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 col1, col2 = st.columns([1, 5])
 
 with col1:
@@ -668,7 +804,7 @@ with col1:
         st.session_state.chat_history = []
         st.rerun()
 
-st.header("Ask a Question")
+st.subheader("Ask a Question")
 
 question = st.text_input(
     "Type your question here:",
@@ -759,12 +895,6 @@ if ask_btn:
                         document_count=document_count,
                     )
 
-                    answer_mode = (
-                        "aggregation"
-                        if is_aggregation_question(retrieval_question)
-                        else "standard"
-                    )
-
                     response = pipeline.answer_question(
                         question=question,
                         retrieval_question=retrieval_question,
@@ -776,6 +906,7 @@ if ask_btn:
                         retrieval_mode=retrieval_mode,
                         selected_documents=selected_retrieval_documents,
                         conversation_context=conversation_context,
+                        allow_adaptive_routing=not advanced_retrieval_controls,
                     )
 
                     if response.log:
@@ -807,19 +938,6 @@ if ask_btn:
                     }
                 )
 
-                st.write("**Grounding Check:**", response.log.grounding_check)
-
-                st.subheader("Answer")
-                st.markdown(response.answer if response.answer else "*No answer generated.*")
-
-                st.write("**Answer Status**:", response.answer_status)
-                st.write("**Retrieval Confidence**:", response.retrieval_confidence)
-                if response.log:
-                    st.write("**Orchestration Intent:**", response.log.orchestration_intent)
-                    st.write("**Retrieval Strategy:**", response.log.retrieval_strategy)
-                    st.write("**Clarification Triggered:**", response.log.clarification_triggered)
-                    st.write("**Orchestration Reasoning:**", response.log.orchestration_reasoning)
-
                 retrieved_document_names = sorted(
                     {
                         source.file_name
@@ -828,36 +946,54 @@ if ask_btn:
                     }
                 )
 
-                st.write(
-                    "**Documents Used:**",
-                    ", ".join(retrieved_document_names)
-                    if retrieved_document_names
-                    else "None",
-                )
+                with st.container(border=True):
+                    st.subheader("Answer")
+                    st.markdown(response.answer if response.answer else "*No answer generated.*")
 
-                st.metric("Retrieved Chunks", len(response.sources))
-                st.write("**Requested Retrieval Depth:**", effective_top_k)
-
-                if selected_retrieval_documents:
-                    st.write(
-                        "**Retrieval Scope:**",
-                        ", ".join(selected_retrieval_documents),
+                    status_col, confidence_col, grounding_col, chunks_col = st.columns(4)
+                    status_col.metric("Answer Status", response.answer_status or "Unknown")
+                    confidence_col.metric("Retrieval Confidence", response.retrieval_confidence or "Unknown")
+                    grounding_col.metric(
+                        "Grounding Check",
+                        response.log.grounding_check if response.log else "Unknown",
                     )
-                else:
-                    st.write("**Retrieval Scope:** All indexed documents")
+                    chunks_col.metric("Retrieved Chunks", len(response.sources))
 
-                st.write("**Retrieval Strategy:**", retrieval_mode)
-
-                if retrieval_mode == "Document-level retrieval":
-                    selected_doc_count = len(selected_retrieval_documents)
-                    chunks_per_document = max(1, effective_top_k // selected_doc_count)
-
+                    st.markdown("**Documents Used:**")
                     st.write(
-                        "**Document-Level Retrieval Detail:**",
-                        f"{chunks_per_document} chunk(s) retrieved per selected document.",
+                        ", ".join(retrieved_document_names)
+                        if retrieved_document_names
+                        else "None",
                     )
 
-                st.write("**Sources:**")
+                with st.expander("Orchestration details", expanded=False):
+                    if response.log:
+                        st.write("**Orchestration Intent:**", response.log.orchestration_intent)
+                        st.write("**Retrieval Strategy:**", response.log.retrieval_strategy)
+                        st.write("**Clarification Triggered:**", response.log.clarification_triggered)
+                        st.write("**Orchestration Reasoning:**", response.log.orchestration_reasoning)
+                    st.write("**Requested Retrieval Depth:**", effective_top_k)
+
+                    if selected_retrieval_documents:
+                        st.write(
+                            "**Retrieval Scope:**",
+                            ", ".join(selected_retrieval_documents),
+                        )
+                    else:
+                        st.write("**Retrieval Scope:** All indexed documents")
+
+                    st.write("**UI Retrieval Mode:**", retrieval_mode)
+
+                    if retrieval_mode == "Document-level retrieval" and selected_retrieval_documents:
+                        selected_doc_count = len(selected_retrieval_documents)
+                        chunks_per_document = max(1, effective_top_k // selected_doc_count)
+
+                        st.write(
+                            "**Document-Level Retrieval Detail:**",
+                            f"{chunks_per_document} chunk(s) retrieved per selected document.",
+                        )
+
+                st.subheader("Sources")
 
                 if response.sources:
                     for source in response.sources:
@@ -931,7 +1067,8 @@ if ask_btn:
 # --- Conversation History ---
 if st.session_state.chat_history:
     st.write("---")
-    st.header("Conversation History")
+    st.subheader("Conversation History")
+    st.caption("Previous questions are kept below so the current question area stays focused.")
 
     for i, turn in enumerate(st.session_state.chat_history, start=1):
 
@@ -1025,7 +1162,7 @@ if st.session_state.chat_history:
 st.markdown(
     """
 ---
-<small>Lightweight MVP RAG UI &nbsp; | &nbsp; [OpenAI + Streamlit Demo]</small>
+<div class="crc-footer">Chase Risk & Compliance &nbsp; | &nbsp; Governance-Aware Document Intelligence Copilot &nbsp; | &nbsp; OpenAI + Streamlit</div>
 """,
     unsafe_allow_html=True,
 )

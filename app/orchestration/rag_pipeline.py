@@ -82,6 +82,7 @@ class RAGPipeline:
         domain_profile: str | None = None,
         retrieval_mode: str = "Standard chunk retrieval",
         selected_documents: list[str] | None = None,
+        allow_adaptive_routing: bool = True,
     ) -> RAGResponse:
         """
         Retrieve relevant context and generate a grounded answer.
@@ -106,7 +107,8 @@ class RAGPipeline:
             requested_top_k=top_k,
         )
 
-        top_k = routing_decision.effective_top_k
+        if allow_adaptive_routing:
+            top_k = routing_decision.effective_top_k
 
         if answer_mode is None:
             answer_mode = orchestration_decision.answer_mode
