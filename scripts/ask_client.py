@@ -19,7 +19,10 @@ def main():
     )
     parser.add_argument(
         "--client",
-        default="demo_client",
+        default=os.getenv(
+            "RAG_DEFAULT_CLIENT_NAME",
+            "default_client",
+        )
         help="Client name / collection suffix.",
     )
     parser.add_argument(

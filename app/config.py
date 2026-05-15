@@ -7,7 +7,7 @@ PERSIST_DIR = os.getenv("RAG_PERSIST_DIR", "data/index")
 
 DEFAULT_CLIENT_NAME = os.getenv(
     "RAG_DEFAULT_CLIENT_NAME",
-    "demo_client",
+    "default_client",
 )
 
 DEFAULT_TOP_K = int(

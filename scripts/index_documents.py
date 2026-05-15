@@ -1,3 +1,5 @@
+import os
+import argparse
 from app.ingestion.ingest import ingest_document
 from app.chunking.chunker import chunk_document
 from app.embeddings.embeddings import EmbeddingClient
@@ -5,9 +7,25 @@ from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
 from app.config import PERSIST_DIR
 
+
 def main():
-    client_name = "demo_client"
-    doc_path = "data/raw/sample.txt"
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--doc-path",
+        required=True,
+        help="Path to document for indexing",
+    )
+
+    args = parser.parse_args()
+
+    doc_path = args.doc_path
+
+    client_name = os.getenv(
+        "RAG_DEFAULT_CLIENT_NAME",
+        "default_client",
+    )
+
     persist_dir = PERSIST_DIR
     collection_name = f"client_{client_name}"
 
