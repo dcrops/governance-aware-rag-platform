@@ -48,12 +48,16 @@ class AnswerGenerator:
 
         else:
             validation_prompt = (
-                "You are validating whether retrieved context is relevant enough to answer a question.\n\n"
+                "You are validating whether retrieved context contains enough relevant evidence "
+                "to answer a user's question without using outside knowledge.\n\n"
                 "Question:\n"
                 f"{question}\n\n"
                 "Retrieved context:\n"
                 f"{context}\n\n"
-                "Does the retrieved context directly contain the information needed to answer the question?\n"
+                "Answer YES if the context contains relevant facts, clauses, statements, or references "
+                "that would allow a grounded answer to the user's question.\n"
+                "Answer NO if the context is unrelated, only weakly related, or does not contain enough "
+                "evidence to support an answer.\n\n"
                 "Answer only YES or NO."
             )
 

@@ -42,6 +42,8 @@ TOP_K = 5
 EVAL_CSV_PATH = "data/evaluation/rag_eval_suite_v2.csv"
 USE_CSV_EVALUATION = True
 
+DEFAULT_CLIENT_NAME = os.getenv("RAG_DEFAULT_CLIENT_NAME", "default_client")
+
 
 def build_query_rewriter(strategy: str):
     if strategy == "none":
@@ -104,18 +106,18 @@ def is_comparison_question(question: str) -> bool:
 
     return any(term in question.lower() for term in comparison_terms)
 
-def is_ambiguous_follow_up(question: str) -> bool:
-    ambiguous_terms = [
-        "what about",
-        "how about",
-        "and payroll",
-        "and hr",
-        "and finance",
-    ]
+# def is_ambiguous_follow_up(question: str) -> bool:
+#     ambiguous_terms = [
+#         "what about",
+#         "how about",
+#         "and payroll",
+#         "and hr",
+#         "and finance",
+#     ]
 
-    q = question.lower()
+#     q = question.lower()
 
-    return any(term in q for term in ambiguous_terms)
+#     return any(term in q for term in ambiguous_terms)
 
 def main():
     total_queries = 0
@@ -138,8 +140,7 @@ def main():
     print("2. Connecting to existing VectorStore index...")
     vector_store = VectorStore(
         persist_dir=PERSIST_DIR,
-        #collection_name=f"client_{DEFAULT_CLIENT_NAME}",
-        collection_name=f"client_RMIT_Demo",
+        collection_name=f"client_{DEFAULT_CLIENT_NAME}",
     )
 
     # print(vector_store._collection.count())
@@ -236,50 +237,6 @@ def main():
             if topic.strip() and topic.strip().lower() != "nan"
         ]
 
-        expected_answer_text = " ".join(expected_topics).lower()
-
-        if (
-            context_type == "follow_up"
-            and is_ambiguous_follow_up(question)
-            and "clarify" in expected_answer_text
-        ):
-            print("\n" + "=" * 80)
-            print(f"Evaluation Query {idx}: {question}")
-            print("=" * 80)
-
-            print("\nExpected Topics:")
-            for topic in expected_topics:
-                print(f"- {topic}")
-
-            print(f"Retrieval Mode Used: {retrieval_mode}")
-            print(f"Search Scope Used: {search_scope}")
-            print(f"Metadata Filter Used: {metadata_filter}")
-            print("Answer Mode Used: clarification")
-
-            print("\nAmbiguous follow-up detected.")
-
-            print("\nAnswer:")
-            print("Can you clarify what you mean?")
-
-            print("\nAnswer Status: CLARIFICATION_REQUIRED")
-
-            total_queries += 1
-
-            answer_status_eval_count += 1
-
-            expected_answer_status = "CLARIFICATION_REQUIRED"
-            actual_answer_status = "CLARIFICATION_REQUIRED"
-
-            if expected_answer_status == actual_answer_status:
-                answer_status_match_count += 1
-            else:
-                answer_status_failures.append(question)
-
-            topic_match_rate = 1.0
-            topic_match_rates.append(topic_match_rate)
-
-            continue
-
         expected_answer_status = case.get("expected_answer_status")
         if expected_answer_status != expected_answer_status:  # handles NaN
             expected_answer_status = None
@@ -307,6 +264,7 @@ def main():
         print(f"Answer Mode Used: {answer_mode}")
 
         retrieval_question = question
+        conversation_context = None
 
         if context_type == "follow_up" and setup_question:
             print(f"Setup Question: {setup_question}")
@@ -319,6 +277,11 @@ def main():
                 retrieval_mode=retrieval_mode,
                 selected_documents=search_scope,
                 answer_mode="standard",
+            )
+
+            conversation_context = (
+                f"Previous question: {setup_question}\n"
+                f"Previous answer: {setup_response.answer}"
             )
 
             expected_rewritten_query = case.get("expected_rewritten_query")
@@ -339,7 +302,8 @@ def main():
             metadata_filter=metadata_filter,
             retrieval_mode=retrieval_mode,
             selected_documents=search_scope,
-            answer_mode=answer_mode,
+            answer_mode=None,
+            conversation_context=conversation_context,
         )
 
         print("\nAnswer:")

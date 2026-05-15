@@ -7,6 +7,7 @@ from app.models.citation import Citation
 from app.models.retrieval_log import RetrievalLog
 from app.orchestration.intent_classifier import IntentClassifier
 from app.orchestration.retrieval_router import RetrievalRouter
+from app.retrieval_strategies.strategy_selector import RetrievalStrategySelector
 
 
 class RAGPipeline:
@@ -20,11 +21,13 @@ class RAGPipeline:
         answer_generator: AnswerGenerator,
         intent_classifier: IntentClassifier | None = None,
         retrieval_router: RetrievalRouter | None = None,
+        strategy_selector: RetrievalStrategySelector | None = None,
     ):
         self.retriever = retriever
         self.answer_generator = answer_generator
         self.intent_classifier = intent_classifier or IntentClassifier()
         self.retrieval_router = retrieval_router or RetrievalRouter()
+        self.strategy_selector = strategy_selector or RetrievalStrategySelector()
 
     def _calculate_confidence(self, search_results) -> str:
         if not search_results:
@@ -172,11 +175,15 @@ class RAGPipeline:
             )
 
         else:
-            retrieval_result = self.retriever.retrieve(
-                query_for_retrieval,
+            strategy = self.strategy_selector.select(routing_decision.retrieval_strategy)
+
+            retrieval_result = strategy.retrieve(
+                retriever=self.retriever,
+                query=query_for_retrieval,
                 top_k=top_k,
                 min_score=min_score,
                 metadata_filter=metadata_filter,
+                selected_documents=selected_documents,
             )
 
             search_results = retrieval_result.search_results

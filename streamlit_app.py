@@ -6,6 +6,10 @@ from openai import OpenAI
 
 import streamlit as st
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from app.config import PERSIST_DIR
 from app.ingestion.ingest import ingest_document
 from app.chunking.chunker import (
@@ -46,7 +50,7 @@ persist_dir = PERSIST_DIR
 
 rewrite_client = OpenAI()
 
-domain_profile = "tgbc"
+domain_profile = os.getenv("DOMAIN_PROFILE", "general")
 
 APP_TITLE = "Governance-Aware Document Intelligence Copilot"
 APP_SUBTITLE = (
@@ -951,7 +955,31 @@ if ask_btn:
                     st.markdown(response.answer if response.answer else "*No answer generated.*")
 
                     status_col, confidence_col, grounding_col, chunks_col = st.columns(4)
-                    status_col.metric("Answer Status", response.answer_status or "Unknown")
+                    status_col.markdown(
+                        f"""
+                        <div style="
+                            padding: 0.75rem;
+                            border: 1px solid rgba(255,255,255,0.12);
+                            border-radius: 12px;
+                            background-color: rgba(255,255,255,0.03);
+                            min-height: 105px;
+                        ">
+                            <div style="font-size:0.8rem; color:rgba(255,255,255,0.65);">
+                                Answer Status
+                            </div>
+                            <div style="
+                                font-size:1.4rem;
+                                font-weight:700;
+                                line-height:1.15;
+                                word-break: break-word;
+                                overflow-wrap: anywhere;
+                            ">
+                                {response.answer_status or "Unknown"}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
                     confidence_col.metric("Retrieval Confidence", response.retrieval_confidence or "Unknown")
                     grounding_col.metric(
                         "Grounding Check",
