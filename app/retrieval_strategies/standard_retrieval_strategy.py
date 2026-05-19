@@ -29,19 +29,19 @@ class StandardRetrievalStrategy(BaseRetrievalStrategy):
 
         for document in selected_documents:
 
-            document_filter = {"document_name": document}
+            document_filter = {"file_name": document}
 
             if metadata_filter:
                 document_filter.update(metadata_filter)
 
             result = retriever.retrieve(
                 query=query,
-                top_k=2,
+                top_k=top_k,
                 min_score=min_score,
                 metadata_filter=document_filter,
             )
 
-            combined_results.extend(result.results)
+            combined_results.extend(result.search_results)
 
         combined_results = sorted(
             combined_results,
@@ -49,4 +49,8 @@ class StandardRetrievalStrategy(BaseRetrievalStrategy):
             reverse=True,
         )[:adjusted_top_k]
 
-        return RetrievalResult(results=combined_results)
+        return RetrievalResult(
+            search_results=combined_results,
+            original_query=query,
+            retrieval_query=query,
+        )

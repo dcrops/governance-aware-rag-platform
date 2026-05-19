@@ -1,5 +1,6 @@
 import os
 import tempfile
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 from openai import OpenAI
@@ -21,10 +22,6 @@ from app.chunking.chunker import (
 from app.embeddings.embeddings import EmbeddingClient
 from app.models.vector_record import VectorRecord
 from app.vector_store.vector_store import VectorStore
-from app.query_processing.query_rewriter import QueryRewriter
-from app.retrieval.retriever import Retriever
-from app.generation.answer_generator import AnswerGenerator
-from app.orchestration.rag_pipeline import RAGPipeline
 from app.ingestion.diagnostics import run_ingestion_diagnostics
 from app.ingestion.diagnostics_store import (
     load_diagnostics,
@@ -38,9 +35,6 @@ from app.document_management.document_registry import (
     delete_document_record,
     delete_client_registry,
 )
-from app.telemetry.telemetry_logger import TelemetryLogger
-from app.reranking.simple_reranker import SimpleReranker
-
 
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 
@@ -49,6 +43,8 @@ st.set_page_config(page_title="CRC Document Intelligence Copilot", layout="wide"
 persist_dir = PERSIST_DIR
 
 rewrite_client = OpenAI()
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 domain_profile = os.getenv("DOMAIN_PROFILE", "general")
 
@@ -218,8 +214,6 @@ def is_aggregation_question(question: str) -> bool:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-telemetry_logger = TelemetryLogger()
-
 # --- Sidebar: Client / KB State ---
 if LOGO_PATH:
     st.sidebar.image(str(LOGO_PATH), width=68)
@@ -284,7 +278,7 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 advanced_indexing_controls = st.sidebar.checkbox(
-    "Show advanced indexing controls",
+    "Show document processing settings",
     value=False,
 )
 
@@ -295,7 +289,7 @@ delimiter = None
 
 if advanced_indexing_controls:
     chunking_strategy = st.sidebar.selectbox(
-        "Chunking strategy",
+        "Document segmentation strategy",
         options=["character", "delimiter", "page", "heading"],
         index=0,
     )
@@ -307,7 +301,7 @@ if advanced_indexing_controls:
 
     if chunking_strategy == "character":
         chunk_size = st.sidebar.slider(
-            "Chunk size",
+            "Document segment size",
             min_value=250,
             max_value=4000,
             value=1000,
@@ -315,7 +309,7 @@ if advanced_indexing_controls:
         )
 
         chunk_overlap = st.sidebar.slider(
-            "Chunk overlap",
+            "Segment overlap",
             min_value=0,
             max_value=1000,
             value=150,
@@ -353,8 +347,8 @@ if advanced_indexing_controls:
 
 else:
     st.sidebar.info(
-        "Indexing uses default character chunking. Enable advanced indexing controls "
-        "to customise chunking strategy, size, overlap, or delimiter."
+        "Indexing uses default document processing settings. Enable document processing "
+        "settings to customise segmentation strategy, segment size, overlap, or delimiter."
     )
 
 index_btn = st.sidebar.button("Index Document")
@@ -372,7 +366,7 @@ index_status = st.sidebar.empty()
 st.sidebar.subheader("Retrieval Settings")
 
 advanced_retrieval_controls = st.sidebar.checkbox(
-    "Show advanced retrieval controls",
+    "Show search & retrieval settings",
     value=False,
 )
 
@@ -392,7 +386,7 @@ if advanced_retrieval_controls:
     st.sidebar.caption("Leave empty to search across all indexed documents.")
 
     top_k = st.sidebar.slider(
-        "Number of chunks to retrieve",
+        "Evidence segments to retrieve",
         min_value=3,
         max_value=30,
         value=DEFAULT_TOP_K,
@@ -400,7 +394,7 @@ if advanced_retrieval_controls:
     )
 
     min_score = st.sidebar.slider(
-        "Minimum retrieval score",
+        "Minimum evidence score",
         min_value=0.0,
         max_value=1.0,
         value=DEFAULT_MIN_SCORE,
@@ -408,7 +402,7 @@ if advanced_retrieval_controls:
     )
 
     retrieval_mode = st.sidebar.selectbox(
-        "Retrieval mode",
+        "Search mode",
         options=[
             "Standard chunk retrieval",
             "Broad retrieval",
@@ -419,7 +413,7 @@ if advanced_retrieval_controls:
     )
 else:
     st.sidebar.info(
-        "Retrieval is being handled automatically by the orchestration layer."
+        "Search and evidence retrieval are handled automatically by the orchestration layer."
     )
 
 
@@ -580,8 +574,6 @@ if index_btn:
                 except Exception:
                     index_status.info("No existing client index found to clear.")
 
-            embedding_client = EmbeddingClient()
-
             all_records = []
             document_records = []
             total_chunks = 0
@@ -714,6 +706,12 @@ if index_btn:
                 total_chunks += len(chunks)
 
                 chunk_texts = [chunk.text for chunk in chunks]
+
+                all_records = []
+                document_records = []
+                total_chunks = 0
+                embedding_client = EmbeddingClient()
+
                 embeddings = embedding_client.embed_texts(chunk_texts)
 
                 if len(embeddings) != len(chunks):
@@ -839,25 +837,6 @@ if ask_btn:
                 )
 
             else:
-                embedding_client = EmbeddingClient()
-                query_rewriter = QueryRewriter()
-
-                reranker = SimpleReranker()
-
-                retriever = Retriever(
-                    embedding_client=embedding_client,
-                    vector_store=vector_store,
-                    query_rewriter=query_rewriter,
-                    reranker=reranker,
-                )
-
-                answer_generator = AnswerGenerator()
-
-                pipeline = RAGPipeline(
-                    retriever=retriever,
-                    answer_generator=answer_generator,
-                )
-
                 metadata_filter = None
 
                 if len(selected_retrieval_documents) == 1:
@@ -899,60 +878,50 @@ if ask_btn:
                         document_count=document_count,
                     )
 
-                    response = pipeline.answer_question(
-                        question=question,
-                        retrieval_question=retrieval_question,
-                        top_k=effective_top_k,
-                        min_score=min_score,
-                        metadata_filter=metadata_filter,
-                        answer_mode=None,
-                        domain_profile=domain_profile,
-                        retrieval_mode=retrieval_mode,
-                        selected_documents=selected_retrieval_documents,
-                        conversation_context=conversation_context,
-                        allow_adaptive_routing=not advanced_retrieval_controls,
+                    api_response = requests.post(
+                        f"{API_BASE_URL}/ask",
+                        json={
+                            "question": question,
+                            "client_name": client_name_clean,
+                            "retrieval_question": retrieval_question,
+                            "conversation_context": conversation_context,
+                            "top_k": effective_top_k,
+                            "min_score": min_score,
+                            "retrieval_mode": retrieval_mode,
+                            "selected_documents": selected_retrieval_documents,
+                            "metadata_filter": metadata_filter,
+                            "allow_adaptive_routing": not advanced_retrieval_controls,
+                        },
+                        timeout=60,
                     )
 
-                    if response.log:
-                        telemetry_logger.log_retrieval(response.log)
+                    api_response.raise_for_status()
+                    response_data = api_response.json()
 
                 st.session_state.chat_history.append(
                     {
                         "question": question,
-                        "retrieval_question": retrieval_question,
-                        "answer": response.answer,
-                        "answer_status": response.answer_status,
-                        "retrieval_confidence": response.retrieval_confidence,
-
-                        "sources": response.sources,
-                        "retrieval_mode": retrieval_mode,
-                        "retrieval_scope": selected_retrieval_documents,
-                        "retrieved_chunks": len(response.sources),
-                        "requested_depth": effective_top_k,
-
-                        "telemetry": (
-                            {
-                                "original_query": response.log.original_query,
-                                "retrieval_query": response.log.retrieval_query,
-                                "scores": response.log.scores,
-                            }
-                            if response.log
-                            else None
-                        ),
+                        "answer": response_data.get("answer"),
+                        "answer_status": response_data.get("answer_status"),
+                        "retrieval_confidence": response_data.get("retrieval_confidence"),
+                        "sources": response_data.get("sources", []),
+                        "retrieved_chunks": len(response_data.get("sources", [])),
                     }
                 )
 
+                sources = response_data.get("sources", [])
+
                 retrieved_document_names = sorted(
                     {
-                        source.file_name
-                        for source in response.sources
-                        if source.file_name
+                        source.get("file_name")
+                        for source in sources
+                        if source.get("file_name")
                     }
                 )
 
                 with st.container(border=True):
                     st.subheader("Answer")
-                    st.markdown(response.answer if response.answer else "*No answer generated.*")
+                    st.markdown(response_data.get("answer") or "*No answer generated.*")
 
                     status_col, confidence_col, grounding_col, chunks_col = st.columns(4)
                     status_col.markdown(
@@ -974,33 +943,34 @@ if ask_btn:
                                 word-break: break-word;
                                 overflow-wrap: anywhere;
                             ">
-                                {response.answer_status or "Unknown"}
+                                {response_data.get("answer_status", "Unknown")}
                             </div>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
-                    confidence_col.metric("Retrieval Confidence", response.retrieval_confidence or "Unknown")
+                    confidence_col.metric("Retrieval Confidence", response_data.get("retrieval_confidence", "Unknown"))
                     grounding_col.metric(
                         "Grounding Check",
-                        response.log.grounding_check if response.log else "Unknown",
+                        response_data.get("grounding_check", "Unknown"),
                     )
-                    chunks_col.metric("Retrieved Chunks", len(response.sources))
+
+                    chunks_col.metric("Retrieved Chunks", len(sources))
 
                     st.markdown("**Documents Used:**")
                     st.write(
                         ", ".join(retrieved_document_names)
                         if retrieved_document_names
-                        else "None",
+                        else "None"
                     )
 
-                with st.expander("Orchestration details", expanded=False):
-                    if response.log:
-                        st.write("**Orchestration Intent:**", response.log.orchestration_intent)
-                        st.write("**Retrieval Strategy:**", response.log.retrieval_strategy)
-                        st.write("**Clarification Triggered:**", response.log.clarification_triggered)
-                        st.write("**Orchestration Reasoning:**", response.log.orchestration_reasoning)
-                    st.write("**Requested Retrieval Depth:**", effective_top_k)
+                    with st.expander("Orchestration details", expanded=False):
+                        st.write("**Retrieval Query:**", response_data.get("retrieval_query", "Unknown"))
+                        st.write("**Orchestration Intent:**", response_data.get("orchestration_intent", "Unknown"))
+                        st.write("**Retrieval Strategy:**", response_data.get("retrieval_strategy", "Unknown"))
+                        st.write("**Clarification Triggered:**", response_data.get("clarification_triggered", "Unknown"))
+                        st.write("**Orchestration Reasoning:**", response_data.get("orchestration_reasoning", "Unknown"))
+                        st.write("**Requested Retrieval Depth:**", effective_top_k)
 
                     if selected_retrieval_documents:
                         st.write(
@@ -1023,71 +993,29 @@ if ask_btn:
 
                 st.subheader("Sources")
 
-                if response.sources:
-                    for source in response.sources:
-                        label_parts = [source.file_name]
+                if sources:
+                    for source in sources:
+                        label_parts = [source.get("file_name", "Unknown document")]
 
-                        if getattr(source, "metadata", None):
-                            metadata = source.metadata
+                        chunk_index = source.get("chunk_index")
+                        if chunk_index is not None:
+                            label_parts.append(f"chunk {chunk_index}")
 
-                            section_title = metadata.get("section_title")
-                            page_number = metadata.get("page_number")
-                            source_chunking_strategy = metadata.get("chunking_strategy")
-
-                            if section_title:
-                                if len(section_title) > 50:
-                                    section_title = section_title[:47] + "..."
-
-                                label_parts.append(f"section: {section_title}")
-
-                            elif page_number is not None:
-                                label_parts.append(f"page {page_number}")
-
-                            else:
-                                label_parts.append(f"chunk {source.chunk_index}")
-
-                            if source_chunking_strategy:
-                                label_parts.append(f"strategy: {source_chunking_strategy}")
-
-                        else:
-                            label_parts.append(f"chunk {source.chunk_index}")
-
-                        score_parts = []
-
-                        if source.vector_score is not None:
-                            score_parts.append(f"vector {source.vector_score:.3f}")
-
-                        if source.rerank_bonus is not None:
-                            score_parts.append(f"bonus {source.rerank_bonus:.3f}")
-
-                        if source.final_score is not None:
-                            score_parts.append(f"final {source.final_score:.3f}")
-
-                        elif source.score is not None:
-                            score_parts.append(f"score {source.score:.3f}")
-
-                        if score_parts:
-                            label_parts.append(" | ".join(score_parts))
+                        score = source.get("score")
+                        if score is not None:
+                            label_parts.append(f"score {score:.3f}")
 
                         label = " | ".join(label_parts)
 
                         with st.expander(label):
-                            if source.text_preview:
-                                st.write(source.text_preview)
+                            preview = source.get("preview")
+                            if preview:
+                                st.write(preview)
                             else:
                                 st.write("_No preview available._")
-
                 else:
                     st.write("_No sources found._")
 
-                st.write("**Telemetry:**")
-
-                if response.log:
-                    st.code(
-                        f"Original Query: {response.log.original_query}\n"
-                        f"Retrieval Query: {response.log.retrieval_query}\n"
-                        f"Scores: {', '.join([str(round(s, 3)) for s in getattr(response.log, 'scores', [])])}"
-                    )
 
         except Exception as e:
             qa_status.error(f"Question answering failed: {e}")
@@ -1138,54 +1066,27 @@ if st.session_state.chat_history:
             sources = turn.get("sources", [])
 
             if sources:
-                st.markdown("**Sources:**")
-
                 for source in sources:
-                    label_parts = [source.file_name]
+                    label_parts = [source.get("file_name", "Unknown document")]
 
-                    if source.metadata:
-                        section_title = source.metadata.get("section_title")
-                        page_number = source.metadata.get("page_number")
-                        source_chunking_strategy = source.metadata.get("chunking_strategy")
+                    chunk_index = source.get("chunk_index")
+                    if chunk_index is not None:
+                        label_parts.append(f"chunk {chunk_index}")
 
-                        if section_title:
-                            if len(section_title) > 50:
-                                section_title = section_title[:47] + "..."
-                            label_parts.append(f"section: {section_title}")
-
-                        elif page_number is not None:
-                            label_parts.append(f"page {page_number}")
-
-                        else:
-                            label_parts.append(f"chunk {source.chunk_index}")
-
-                        if source_chunking_strategy:
-                            label_parts.append(f"strategy: {source_chunking_strategy}")
-
-                    score_parts = []
-
-                    if source.vector_score is not None:
-                        score_parts.append(f"vector {source.vector_score:.3f}")
-
-                    if source.rerank_bonus is not None:
-                        score_parts.append(f"bonus {source.rerank_bonus:.3f}")
-
-                    if source.final_score is not None:
-                        score_parts.append(f"final {source.final_score:.3f}")
-
-                    elif source.score is not None:
-                        score_parts.append(f"score {source.score:.3f}")
-
-                    if score_parts:
-                        label_parts.append(" | ".join(score_parts))
+                    score = source.get("score")
+                    if score is not None:
+                        label_parts.append(f"score {score:.3f}")
 
                     label = " | ".join(label_parts)
 
                     with st.expander(label):
-                        if source.text_preview:
-                            st.write(source.text_preview)
+                        preview = source.get("preview")
+                        if preview:
+                            st.write(preview)
                         else:
                             st.write("_No preview available._")
+            else:
+                st.write("_No sources found._")
 
 st.markdown(
     """
