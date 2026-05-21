@@ -4,7 +4,7 @@ def get_domain_profile(profile_name: str | None) -> str:
     for retrieval and aggregation workflows.
     """
 
-    if profile_name == "tgbc":
+    if profile_name == "chapter_detection":
         return (
             "Treat phrases such as "
             "'new men of the X Chapter', "

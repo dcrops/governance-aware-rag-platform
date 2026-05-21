@@ -34,3 +34,5 @@ class RetrievalLog(BaseModel):
     retrieval_strategy: str | None = None
     orchestration_reasoning: str | None = None
     clarification_triggered: bool = False
+
+    stage_timings: dict | None = None

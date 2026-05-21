@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import time
 
 from app.retrieval.retriever import Retriever
 from app.generation.answer_generator import AnswerGenerator
@@ -100,6 +101,10 @@ class RAGPipeline:
             if not isinstance(min_score, (int, float)) or min_score < 0:
                 raise ValueError("min_score must be a non-negative number.")
 
+        stage_timings = {}
+
+        orchestration_started_at = time.perf_counter()
+
         orchestration_decision = self.intent_classifier.classify(
             question=question,
             conversation_context=conversation_context,
@@ -108,6 +113,11 @@ class RAGPipeline:
         routing_decision = self.retrieval_router.route(
             orchestration_decision=orchestration_decision,
             requested_top_k=top_k,
+        )
+
+        stage_timings["orchestration_duration_ms"] = round(
+            (time.perf_counter() - orchestration_started_at) * 1000,
+            2,
         )
 
         if allow_adaptive_routing:
@@ -136,6 +146,7 @@ class RAGPipeline:
                 retrieval_strategy=routing_decision.retrieval_strategy,
                 orchestration_reasoning=orchestration_decision.reasoning,
                 clarification_triggered=orchestration_decision.clarification_required,
+                stage_timings=stage_timings,
             )
 
             return RAGResponse(
@@ -167,6 +178,8 @@ class RAGPipeline:
                 top_k // len(selected_documents),
             )
 
+            retrieval_started_at = time.perf_counter()
+
             search_results = self.retrieve_per_document(
                 question=query_for_retrieval,
                 document_names=selected_documents,
@@ -174,8 +187,15 @@ class RAGPipeline:
                 min_score=min_score,
             )
 
+            stage_timings["retrieval_duration_ms"] = round(
+                (time.perf_counter() - retrieval_started_at) * 1000,
+                2,
+            )
+
         else:
             strategy = self.strategy_selector.select(routing_decision.retrieval_strategy)
+
+            retrieval_started_at = time.perf_counter()
 
             retrieval_result = strategy.retrieve(
                 retriever=self.retriever,
@@ -184,6 +204,11 @@ class RAGPipeline:
                 min_score=min_score,
                 metadata_filter=metadata_filter,
                 selected_documents=selected_documents,
+            )
+
+            stage_timings["retrieval_duration_ms"] = round(
+                (time.perf_counter() - retrieval_started_at) * 1000,
+                2,
             )
 
             search_results = retrieval_result.search_results
@@ -211,6 +236,7 @@ class RAGPipeline:
                 retrieval_strategy=routing_decision.retrieval_strategy,
                 orchestration_reasoning=orchestration_decision.reasoning,
                 clarification_triggered=orchestration_decision.clarification_required,
+                stage_timings=stage_timings,
             )
 
             return RAGResponse(
@@ -224,11 +250,18 @@ class RAGPipeline:
 
         retrieval_confidence = self._calculate_confidence(search_results)
 
+        generation_started_at = time.perf_counter()
+
         answer, grounding_check = self.answer_generator.generate_answer(
             question=question,
             search_results=search_results,
             answer_mode=answer_mode,
             domain_profile=domain_profile,
+        )
+
+        stage_timings["generation_duration_ms"] = round(
+            (time.perf_counter() - generation_started_at) * 1000,
+            2,
         )
 
         answer_status = (
@@ -283,6 +316,7 @@ class RAGPipeline:
             retrieval_strategy=routing_decision.retrieval_strategy,
             orchestration_reasoning=orchestration_decision.reasoning,
             clarification_triggered=orchestration_decision.clarification_required,
+            stage_timings=stage_timings,
         )
 
         return RAGResponse(

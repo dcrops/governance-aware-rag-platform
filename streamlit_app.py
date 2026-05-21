@@ -878,8 +878,13 @@ if ask_btn:
                         document_count=document_count,
                     )
 
+                    api_headers = {
+                        "x-api-key": os.getenv("API_KEY", ""),
+                    }
+
                     api_response = requests.post(
                         f"{API_BASE_URL}/ask",
+                        headers=api_headers,
                         json={
                             "question": question,
                             "client_name": client_name_clean,
@@ -965,11 +970,53 @@ if ask_btn:
                     )
 
                     with st.expander("Orchestration details", expanded=False):
+
                         st.write("**Retrieval Query:**", response_data.get("retrieval_query", "Unknown"))
-                        st.write("**Orchestration Intent:**", response_data.get("orchestration_intent", "Unknown"))
-                        st.write("**Retrieval Strategy:**", response_data.get("retrieval_strategy", "Unknown"))
-                        st.write("**Clarification Triggered:**", response_data.get("clarification_triggered", "Unknown"))
-                        st.write("**Orchestration Reasoning:**", response_data.get("orchestration_reasoning", "Unknown"))
+
+                        st.write(
+                            "**Orchestration Intent:**",
+                            response_data.get("orchestration_intent", "Unknown"),
+                        )
+
+                        st.write(
+                            "**Retrieval Strategy:**",
+                            response_data.get("retrieval_strategy", "Unknown"),
+                        )
+
+                        st.write(
+                            "**Clarification Triggered:**",
+                            response_data.get("clarification_triggered", "Unknown"),
+                        )
+
+                        st.write(
+                            "**Orchestration Reasoning:**",
+                            response_data.get("orchestration_reasoning", "Unknown"),
+                        )
+
+                        timing = response_data.get("timing", {})
+
+                        st.write(
+                            "**Total API Duration:**",
+                            f"{timing.get('total_duration_ms', 'Unknown')} ms",
+                        )
+
+                        st.write(
+                            "**Pipeline Duration:**",
+                            f"{timing.get('pipeline_duration_ms', 'Unknown')} ms",
+                        )
+
+                        st.write(
+                            "**Setup Duration:**",
+                            f"{timing.get('setup_duration_ms', 'Unknown')} ms",
+                        )
+
+                        stage_timings = timing.get("stage_timings", {})
+
+                        if stage_timings:
+                            st.write("**Stage Timings:**")
+                            for stage_name, duration_ms in stage_timings.items():
+                                st.write(f"- {stage_name}: {duration_ms} ms")
+
                         st.write("**Requested Retrieval Depth:**", effective_top_k)
 
                     if selected_retrieval_documents:

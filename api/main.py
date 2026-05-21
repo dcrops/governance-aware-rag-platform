@@ -1,8 +1,9 @@
 import os
-from fastapi import FastAPI
-from fastapi import Depends, Header, HTTPException
-from pydantic import BaseModel
+import time
 from datetime import datetime, timezone
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 from app.embeddings.embeddings import EmbeddingClient
@@ -12,7 +13,7 @@ from app.retrieval.retriever import Retriever
 from app.generation.answer_generator import AnswerGenerator
 from app.orchestration.rag_pipeline import RAGPipeline
 from app.reranking.simple_reranker import SimpleReranker
-from fastapi import HTTPException
+
 
 app = FastAPI(
     title="CRC Governance-Aware RAG API",
@@ -21,16 +22,16 @@ app = FastAPI(
 
 APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
 SERVICE_NAME = "crc-rag-api"
-
 API_KEY = os.getenv("API_KEY")
 
-def validate_api_key(x_api_key: str | None = Header(None)):
 
+def validate_api_key(x_api_key: str | None = Header(None)):
     if not x_api_key or x_api_key != API_KEY:
         raise HTTPException(
             status_code=401,
             detail="Invalid API key.",
         )
+
 
 class AskRequest(BaseModel):
     question: str
@@ -46,21 +47,22 @@ class AskRequest(BaseModel):
 
 
 @app.get("/")
-def healthcheck():
-
+def root():
     return {
         "status": "running",
-        "service": "crc-rag-api",
+        "service": SERVICE_NAME,
+        "version": APP_VERSION,
     }
 
 
 @app.post("/ask")
 def ask_question(
-        request: AskRequest,
-        _: None = Depends(validate_api_key),
-    ):
-
+    request: AskRequest,
+    _: None = Depends(validate_api_key),
+):
     try:
+        request_started_at = time.perf_counter()
+
         client_name = request.client_name or os.getenv(
             "RAG_DEFAULT_CLIENT_NAME",
             DEFAULT_CLIENT_NAME,
@@ -68,17 +70,32 @@ def ask_question(
 
         collection_name = f"client_{client_name}"
 
+        setup_started_at = time.perf_counter()
+
         vector_store = VectorStore(
             persist_dir=PERSIST_DIR,
             collection_name=collection_name,
         )
 
         if vector_store.count() == 0:
+            total_duration_ms = round(
+                (time.perf_counter() - request_started_at) * 1000,
+                2,
+            )
+
             return {
                 "answer": None,
                 "answer_status": "NO_INDEX_FOUND",
                 "message": f"No indexed documents found for client '{client_name}'.",
+                "retrieval_confidence": "NONE",
+                "grounding_check": "SKIPPED",
                 "sources": [],
+                "timing": {
+                    "total_duration_ms": total_duration_ms,
+                    "setup_duration_ms": None,
+                    "pipeline_duration_ms": None,
+                    "stage_timings": {},
+                },
             }
 
         embedding_client = EmbeddingClient()
@@ -99,10 +116,17 @@ def ask_question(
             answer_generator=answer_generator,
         )
 
+        setup_duration_ms = round(
+            (time.perf_counter() - setup_started_at) * 1000,
+            2,
+        )
+
         metadata_filter = request.metadata_filter
 
         if request.selected_documents:
             metadata_filter = None
+
+        pipeline_started_at = time.perf_counter()
 
         response = pipeline.answer_question(
             question=request.question,
@@ -117,6 +141,14 @@ def ask_question(
             allow_adaptive_routing=request.allow_adaptive_routing,
         )
 
+        pipeline_duration_ms = round((time.perf_counter() - pipeline_started_at) * 1000, 2)
+        total_duration_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
+
+        total_duration_ms = round(
+            (time.perf_counter() - request_started_at) * 1000,
+            2,
+        )
+
         return {
             "question": request.question,
             "retrieval_query": response.log.retrieval_query if response.log else None,
@@ -128,6 +160,12 @@ def ask_question(
             "retrieval_strategy": response.log.retrieval_strategy if response.log else None,
             "orchestration_reasoning": response.log.orchestration_reasoning if response.log else None,
             "clarification_triggered": response.log.clarification_triggered if response.log else None,
+            "timing": {
+                "total_duration_ms": total_duration_ms,
+                "setup_duration_ms": setup_duration_ms,
+                "pipeline_duration_ms": pipeline_duration_ms,
+                "stage_timings": response.log.stage_timings if response.log else {},
+            },
             "sources": [
                 {
                     "file_name": source.file_name,
@@ -150,6 +188,7 @@ def ask_question(
             status_code=500,
             detail=f"RAG pipeline failure: {str(e)}",
         )
+
 
 @app.get("/health")
 def healthcheck():
