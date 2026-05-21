@@ -99,11 +99,11 @@ Endpoints:
 
 # Demo Flow
 
-- [MVP V1 Summary](docs/MVP_V1_SUMMARY.md)
-- [Architecture Diagram](docs/ARCHITECTURE_DIAGRAM.md)
-- [Demo Script](docs/DEMO_SCRIPT.md)
-- [Recruiter Summary](docs/RECRUITER_SUMMARY.md)
-- [Future Roadmap](docs/FUTURE_ROADMAP.md)
+- [MVP V1 Summary](MVP_V1_SUMMARY.md)
+- [Architecture Diagram](ARCHITECTURE_DIAGRAM.md)
+- [Demo Script](DEMO_SCRIPT.md)
+- [Recruiter Summary](RECRUITER_SUMMARY.md)
+- [Future Roadmap](FUTURE_ROADMAP.md)
 
 ---
 
