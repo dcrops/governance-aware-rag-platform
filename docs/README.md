@@ -140,7 +140,7 @@ Structured JSONL telemetry logging including:
 
 ## Architecture Diagram
 
-![Architecture](screenshots/architecture.png)
+![Architecture](screenshots/Architecture.png)
 
 # Current Status
 
