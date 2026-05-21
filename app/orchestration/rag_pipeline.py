@@ -30,6 +30,25 @@ class RAGPipeline:
         self.retrieval_router = retrieval_router or RetrievalRouter()
         self.strategy_selector = strategy_selector or RetrievalStrategySelector()
 
+    def _prune_generation_context(
+        self,
+        search_results,
+        max_generation_chunks: int = 7,
+        min_relative_score: float = 0.75,
+    ):
+        if not search_results:
+            return search_results
+
+        top_score = max(result.score for result in search_results)
+
+        pruned_results = [
+            result
+            for result in search_results
+            if result.score >= top_score * min_relative_score
+        ]
+
+        return pruned_results[:max_generation_chunks]
+
     def _calculate_confidence(self, search_results) -> str:
         if not search_results:
             return "NONE"
@@ -212,6 +231,8 @@ class RAGPipeline:
             )
 
             search_results = retrieval_result.search_results
+            if orchestration_decision.intent != "aggregation":
+                search_results = self._prune_generation_context(search_results)
 
         if not search_results:
             fallback_answer = (

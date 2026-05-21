@@ -258,3 +258,97 @@ This foundation directly supports future CRC AI Services client-facing RAG syste
 - Evaluation metrics require semantic interpretation.
 - Observability and diagnostics are essential for trustworthy AI systems.
 - AI knowledge systems require governance-aware ingestion and evaluation layers.
+
+
+# Post-MVP Retrieval Engineering Learnings
+
+## Retrieval Precision vs Recall Tradeoffs
+
+The orchestration and telemetry layers exposed important retrieval engineering tradeoffs between:
+
+- retrieval precision
+- retrieval breadth
+- aggregation completeness
+- grounded answer quality
+
+Focused questions benefited from:
+
+- retrieval pruning
+- tighter semantic filtering
+- stronger dominant-document weighting
+
+Aggregation-style questions benefited from:
+
+- broader retrieval depth
+- document-balanced retrieval
+- wider semantic coverage
+
+This demonstrated that retrieval behaviour should adapt to orchestration intent.
+
+---
+
+## Retrieval Drift Observations
+
+Telemetry and retrieval tracing revealed that broad semantic queries could retrieve:
+
+- semantically adjacent governance documents
+- weakly related documents
+- low-value retrieval noise
+
+Examples included:
+
+- unrelated governance policies
+- generic organisational documents
+- semantically broad references
+
+This highlighted the importance of:
+
+- corpus management
+- retrieval filtering
+- orchestration-aware retrieval policies
+- future corpus/domain partitioning
+
+---
+
+## Retrieval Pruning Learnings
+
+Focused retrieval pruning significantly improved:
+
+- grounding quality
+- answer precision
+- generation speed
+- document relevance consistency
+
+However, overly aggressive pruning reduced retrieval breadth for aggregation queries.
+
+This demonstrated:
+
+> retrieval optimisation must align with orchestration intent.
+
+---
+
+## Observability-Driven Retrieval Engineering
+
+The addition of:
+
+- retrieval telemetry
+- retrieval traces
+- stage timing diagnostics
+- orchestration reasoning
+
+allowed retrieval behaviour to be analysed empirically rather than heuristically.
+
+This enabled:
+
+- retrieval drift analysis
+- retrieval breadth analysis
+- timing bottleneck identification
+- evidence-based retrieval tuning
+
+The project evolved from:
+
+> basic retrieval experimentation
+
+into:
+
+> orchestration-aware retrieval engineering infrastructure.

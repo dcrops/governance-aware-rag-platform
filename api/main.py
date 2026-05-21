@@ -13,6 +13,7 @@ from app.retrieval.retriever import Retriever
 from app.generation.answer_generator import AnswerGenerator
 from app.orchestration.rag_pipeline import RAGPipeline
 from app.reranking.simple_reranker import SimpleReranker
+from app.telemetry.request_telemetry_logger import RequestTelemetryLogger
 
 
 app = FastAPI(
@@ -23,6 +24,8 @@ app = FastAPI(
 APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
 SERVICE_NAME = "crc-rag-api"
 API_KEY = os.getenv("API_KEY")
+
+request_logger = RequestTelemetryLogger()
 
 
 def validate_api_key(x_api_key: str | None = Header(None)):
@@ -147,6 +150,39 @@ def ask_question(
         total_duration_ms = round(
             (time.perf_counter() - request_started_at) * 1000,
             2,
+        )
+
+        request_logger.log(
+            {
+                "client_name": client_name,
+                "question": request.question,
+                "retrieval_query": response.log.retrieval_query if response.log else None,
+                "answer_status": response.answer_status,
+                "retrieval_confidence": response.retrieval_confidence,
+                "grounding_check": response.log.grounding_check if response.log else None,
+                "orchestration_intent": response.log.orchestration_intent if response.log else None,
+                "retrieval_strategy": response.log.retrieval_strategy if response.log else None,
+                "documents_used": response.log.documents_used if response.log else [],
+                "top_k": request.top_k,
+                "timing": {
+                    "total_duration_ms": total_duration_ms,
+                    "setup_duration_ms": setup_duration_ms,
+                    "pipeline_duration_ms": pipeline_duration_ms,
+                    "stage_timings": response.log.stage_timings if response.log else {},
+                },
+                "source_count": len(response.sources),
+                "retrieval_trace": [
+                    {
+                        "file_name": source.file_name,
+                        "chunk_index": source.chunk_index,
+                        "score": source.score,
+                        "preview": source.text_preview,
+                    }
+                    for source in response.sources[:20]
+                ],
+                "retrieval_trace_truncated": len(response.sources) > 20,
+                "retrieval_trace_total_sources": len(response.sources),
+            }
         )
 
         return {

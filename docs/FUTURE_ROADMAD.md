@@ -142,3 +142,46 @@ Current state:
 Next major transition:
 
 - pivot from retrieval experimentation toward operational client workflows and deployment readiness
+
+# Retrieval Orchestration Evolution
+
+Future orchestration enhancements:
+
+- adaptive retrieval pruning
+- orchestration-aware retrieval policies
+- corpus-aware retrieval routing
+- hybrid lexical + semantic retrieval
+- domain partitioning
+- retrieval voting strategies
+- adaptive retrieval depth
+- retrieval confidence calibration
+
+---
+
+# Observability Expansion
+
+Planned observability enhancements:
+
+- telemetry dashboards
+- retrieval analytics dashboards
+- latency analytics
+- orchestration analytics
+- retrieval drift monitoring
+- retrieval quality trend analysis
+- grounding quality analytics
+- pipeline performance monitoring
+
+---
+
+# Corpus & Governance Layer Evolution
+
+Future governance-aware retrieval enhancements:
+
+- domain-separated corpora
+- governance-aware retrieval policies
+- collection partitioning
+- document lifecycle governance
+- stale document analysis
+- retrieval trust scoring
+- corpus quality diagnostics
+- AI-ready document governance layers

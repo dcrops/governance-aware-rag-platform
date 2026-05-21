@@ -435,3 +435,111 @@ Capabilities:
 - client collection selection
 - optional file-scoped retrieval
 - telemetry display
+
+# UPDATED SYSTEM_OVERVIEW.md ADDITIONS
+
+# API Layer
+
+Location:
+
+- `api/`
+
+Capabilities:
+
+- FastAPI backend
+- REST API querying
+- API key authentication
+- structured error handling
+- Docker deployment support
+- orchestration-aware responses
+
+Endpoints:
+
+- `/ask`
+- `/health`
+- `/version`
+
+---
+
+# Expanded Orchestration Layer
+
+Location:
+
+- `app/orchestration/`
+
+Primary pipeline:
+
+- `RAGPipeline`
+
+Responsibilities:
+
+- orchestration intent classification
+- retrieval strategy routing
+- conversational follow-up handling
+- clarification detection
+- query rewriting integration
+- retrieval pruning
+- generation orchestration
+- telemetry integration
+- response packaging
+
+Supported orchestration intents:
+
+- standard
+- aggregation
+- comparison
+- clarification
+
+Supported retrieval strategies:
+
+- standard
+- comparison
+- document_balanced
+- document-level retrieval
+
+Current orchestration behaviours:
+
+- aggregation-aware retrieval
+- comparison-aware retrieval
+- conversational ambiguity handling
+- unsupported-answer handling
+- retrieval trace generation
+
+---
+
+# Expanded Telemetry Layer
+
+Current capabilities:
+
+- retrieval logging
+- request telemetry logging
+- orchestration reasoning logging
+- retrieval trace logging
+- pipeline timing diagnostics
+- stage timing diagnostics
+- retrieval score tracking
+- retrieved chunk tracking
+
+Telemetry fields:
+
+- original query
+- rewritten query
+- orchestration intent
+- retrieval strategy
+- grounding check
+- retrieval confidence
+- retrieved chunk IDs
+- similarity scores
+- stage timings
+- pipeline timings
+- request timings
+- retrieval traces
+
+Storage:
+
+- JSONL logging
+
+Current telemetry files:
+
+- `logs/request_telemetry.jsonl`
+- `logs/evaluation_runs/`

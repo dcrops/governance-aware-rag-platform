@@ -1,13 +1,17 @@
-# CRC AI Services — Client RAG MVP
+# CRC Governance-Aware RAG Platform
 
-A governance-aware Retrieval Augmented Generation (RAG) platform for ingesting, indexing, retrieving, and querying client knowledge bases.
+A governance-aware Retrieval Augmented Generation (RAG) platform focused on grounded retrieval, orchestration-aware reasoning, explainable AI behaviour, and operational observability.
 
-This project is part of the CRC AI Services roadmap and focuses on:
+This project forms part of the CRC AI Services roadmap and focuses on:
+
 - trustworthy retrieval
 - grounded responses
-- document lifecycle management
-- retrieval evaluation
+- orchestration-aware reasoning
+- conversational retrieval
+- retrieval observability
+- governance-aware AI workflows
 - ingestion diagnostics
+- telemetry and evaluation
 - operational knowledge-base workflows
 
 ---
@@ -15,161 +19,147 @@ This project is part of the CRC AI Services roadmap and focuses on:
 # Current MVP Capabilities
 
 ## Document Ingestion
+
 - TXT ingestion
 - PDF ingestion
 - DOCX ingestion
+- ingestion diagnostics
+- readiness scoring
+- metadata extraction
+- client-scoped indexing
 
 ## Chunking Strategies
+
 - Character chunking
 - Delimiter chunking
 - Page chunking
 - Heading-aware chunking
 
 ## Retrieval Features
+
 - Semantic vector retrieval
 - Metadata-scoped retrieval
 - Retrieval confidence reporting
 - Source tracing
+- Retrieval pruning
+- Document-scoped retrieval
+- Aggregation-aware retrieval
+- Comparison retrieval
 - Unsupported-answer handling
 
-## Knowledge Base Management
-- Persistent document registry
-- Multi-document indexing
-- Document deletion
-- Re-indexing workflows
-- Client-scoped collections
+## Orchestration Features
 
-## Governance Features
-- Ingestion diagnostics
-- Readiness scoring
-- Retrieval evaluation framework
-- Retrieval benchmarking
-- Synthetic evaluation corpus
+- Retrieval intent classification
+- Conversational follow-up handling
+- Clarification detection
+- Query rewriting
+- Adaptive retrieval routing
+- Retrieval strategy selection
 
----
+Supported orchestration intents:
 
-# Project Structure
+- standard
+- aggregation
+- comparison
+- clarification
 
-```text
-app/
-  chunking/
-  config.py
-  document_management/
-  embeddings/
-  generation/
-  ingestion/
-  orchestration/
-  query_processing/
-  retrieval/
-  telemetry/
-  vector_store/
+Supported retrieval strategies:
 
-data/
-  evaluation_docs/
-  index/
+- standard
+- document_balanced
+- comparison
+- document-level retrieval
 
-logs/
-  evaluation_runs/
+## Observability & Telemetry
 
-tests/
-```
+- Retrieval telemetry
+- Request telemetry logging
+- Retrieval trace logging
+- Pipeline timing diagnostics
+- Stage timing diagnostics
+- Orchestration reasoning visibility
+- Retrieval score tracking
+- Evaluation benchmarking
 
----
+## API & Deployment
 
-# Installation
+- FastAPI backend
+- Docker Compose deployment
+- API key authentication
+- Structured error handling
+- Streamlit UI frontend
 
-## Create virtual environment
+Endpoints:
 
-```bash
-python -m venv .venv
-```
-
-## Activate environment
-
-### Windows
-
-```bash
-.venv\\Scripts\\activate
-```
-
-### macOS/Linux
-
-```bash
-source .venv/bin/activate
-```
-
-## Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
+- `/ask`
+- `/health`
+- `/version`
 
 ---
 
-# Environment Variables
+# System Screenshots
 
-Create a `.env` file in project root:
+## Streamlit UI — Standard Retrieval
 
-```env
-RAG_PERSIST_DIR=data/index
-RAG_DEFAULT_CLIENT_NAME=demo_client
-RAG_DEFAULT_TOP_K=5
-RAG_DEFAULT_MIN_SCORE=0.35
-```
+Focused grounded retrieval using the `standard` orchestration intent and retrieval strategy.
+
+![Streamlit UI - Standard Retrieval](docs/screenshots/Streamlit%20UI%20-%20Standard%20Retrieval.png)
 
 ---
 
-# Running The Streamlit App
+## Streamlit UI — Aggregation Retrieval
 
-```bash
-streamlit run streamlit_app.py
-```
+Broad cross-document retrieval using the `aggregation` orchestration intent and `document_balanced` retrieval strategy.
+
+![Streamlit UI - Aggregation Retrieval 1](docs/screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%201.png)
+
+![Streamlit UI - Aggregation Retrieval 2](docs/screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%202.png)
+
+---
+
+## Swagger UI — Authenticated API Request
+
+FastAPI Swagger interface demonstrating authenticated `/ask` endpoint usage.
+
+![Swagger UI - Authenticated Request](docs/screenshots/Swagger%20UI%20-%20Authenticated%20Request.png)
 
 ---
 
-# Running Evaluation Framework
+## Telemetry & Observability Logging
 
-Example:
+Structured JSONL telemetry logging including:
 
-```bash
-python scripts/run_evaluation.py
-```
+- orchestration intent
+- retrieval strategy
+- timing diagnostics
+- retrieval traces
+- grounding checks
+- retrieval confidence
 
----
+![Telemetry Log](docs/screenshots/Telemetry%20Log.png)
 
 # Current Status
 
 Current state:
+
 - Retrieval Evaluation V1 complete
-- Client MVP operational workflows in progress
-- Deployment readiness underway
+- Orchestration layer operational
+- Conversational retrieval operational
+- Observability telemetry operational
+- Docker deployment operational
+- API authentication operational
+- MVP V1 stabilisation complete
 
 ---
 
-# Future Roadmap
+# Current MVP Limitations
 
-Planned:
-- deployment support
-- authentication
-- reranking
-- delimiter candidate detection
-- ingestion governance
-- AI-ready document transformation
-- governance dashboards
-- multi-user support
+Known limitations:
 
----
-
-# Important Notes
-
-This project is:
-- a learning and engineering platform
-- a governance-aware AI system prototype
-- not production hardened
-- not intended for legal or compliance advice
-
----
-
-# CRC AI Services
-
-This project forms part of the CRC AI Services roadmap focused on trustworthy and operational AI knowledge systems.
+- global collection retrieval can introduce retrieval noise
+- aggregation retrieval may retrieve semantically broad documents
+- no hybrid lexical + semantic retrieval yet
+- no advanced caching layer
+- no multi-user permissions layer
+- no enterprise authentication layer
+- corpus/domain partitioning not yet implemented
