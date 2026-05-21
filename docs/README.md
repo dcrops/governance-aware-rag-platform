@@ -103,7 +103,7 @@ Endpoints:
 
 Focused grounded retrieval using the `standard` orchestration intent and retrieval strategy.
 
-![Streamlit UI - Standard Retrieval](docs/screenshots/Streamlit%20UI%20-%20Standard%20Retrieval.png)
+![Streamlit UI - Standard Retrieval](screenshots/Streamlit%20UI%20-%20Standard%20Retrieval.png)
 
 ---
 
@@ -111,9 +111,9 @@ Focused grounded retrieval using the `standard` orchestration intent and retriev
 
 Broad cross-document retrieval using the `aggregation` orchestration intent and `document_balanced` retrieval strategy.
 
-![Streamlit UI - Aggregation Retrieval 1](docs/screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%201.png)
+![Streamlit UI - Aggregation Retrieval 1](screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%201.png)
 
-![Streamlit UI - Aggregation Retrieval 2](docs/screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%202.png)
+![Streamlit UI - Aggregation Retrieval 2](screenshots/Streamlit%20UI%20-%20Aggregation%20Retrieval%202.png)
 
 ---
 
@@ -121,7 +121,7 @@ Broad cross-document retrieval using the `aggregation` orchestration intent and 
 
 FastAPI Swagger interface demonstrating authenticated `/ask` endpoint usage.
 
-![Swagger UI - Authenticated Request](docs/screenshots/Swagger%20UI%20-%20Authenticated%20Request.png)
+![Swagger UI - Authenticated Request](screenshots/Swagger%20UI%20-%20Authenticated%20Request.png)
 
 ---
 
@@ -136,7 +136,11 @@ Structured JSONL telemetry logging including:
 - grounding checks
 - retrieval confidence
 
-![Telemetry Log](docs/screenshots/Telemetry%20Log.png)
+![Telemetry Log](screenshots/Telemetry%20Log.png)
+
+## Architecture Diagram
+
+![Architecture](screenshots/architecture.png)
 
 # Current Status
 
