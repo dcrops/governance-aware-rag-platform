@@ -2,6 +2,10 @@ import os
 import time
 from datetime import datetime, timezone
 
+import truststore
+
+truststore.inject_into_ssl()
+
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
@@ -74,6 +78,8 @@ def ask_question(
         collection_name = f"client_{client_name}"
 
         setup_started_at = time.perf_counter()
+
+        VectorStore.refresh_persisted_client(PERSIST_DIR)
 
         vector_store = VectorStore(
             persist_dir=PERSIST_DIR,

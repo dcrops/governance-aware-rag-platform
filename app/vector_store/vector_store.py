@@ -1,12 +1,22 @@
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field, ValidationError
+from pathlib import Path
 
 from app.models.vector_record import VectorRecord
 
 try:
     import chromadb
+    from chromadb.api.shared_system_client import SharedSystemClient
 except ImportError:
     raise ImportError("ChromaDB is required. Please install with `pip install chromadb`.")
+
+
+def _resolve_persist_dir(persist_dir: str) -> str:
+    return str(Path(persist_dir).resolve())
+
+
+def _persisted_system_identifier(persist_dir: str) -> str:
+    return _resolve_persist_dir(persist_dir)
 
 
 class SearchResult(BaseModel):
@@ -41,7 +51,7 @@ class VectorStore:
             persist_dir: Directory path for persisted index storage.
             collection_name: The name of the vector collection.
         """
-        self.persist_dir = persist_dir
+        self.persist_dir = _resolve_persist_dir(persist_dir)
         self.collection_name = collection_name
 
         self._client = chromadb.PersistentClient(
@@ -50,6 +60,21 @@ class VectorStore:
         self._collection = self._client.get_or_create_collection(
             name=self.collection_name
         )
+
+    @classmethod
+    def refresh_persisted_client(cls, persist_dir: str) -> None:
+        """Drop cached Chroma system state so reads observe cross-process writes."""
+        identifier = _persisted_system_identifier(persist_dir)
+        system = SharedSystemClient._identifier_to_system.get(identifier)
+        if system is not None:
+            system.stop()
+        SharedSystemClient.clear_system_cache()
+
+    def release_persisted_client(self) -> None:
+        """Release this process's Chroma handles after writes in another process may read."""
+        self.refresh_persisted_client(self.persist_dir)
+        self._client = None
+        self._collection = None
 
     def delete_collection(self) -> None:
         """Delete the current Chroma collection."""

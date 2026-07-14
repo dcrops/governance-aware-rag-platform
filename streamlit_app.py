@@ -1,7 +1,6 @@
 import os
 import tempfile
 import requests
-from datetime import datetime, timezone
 from pathlib import Path
 from openai import OpenAI
 
@@ -9,34 +8,31 @@ import streamlit as st
 
 from dotenv import load_dotenv
 
+import truststore
+
+truststore.inject_into_ssl()
+
 load_dotenv()
 
-from app.config import PERSIST_DIR
-from app.ingestion.ingest import ingest_document
-from app.chunking.chunker import (
-    chunk_document,
-    chunk_document_by_delimiter,
-    chunk_document_by_page,
-    chunk_document_by_heading,
-)
-from app.embeddings.embeddings import EmbeddingClient
-from app.models.vector_record import VectorRecord
-from app.vector_store.vector_store import VectorStore
-from app.ingestion.diagnostics import run_ingestion_diagnostics
+from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
 from app.ingestion.diagnostics_store import (
     load_diagnostics,
-    save_document_diagnostics,
     delete_document_diagnostics,
     delete_client_diagnostics,
 )
 from app.document_management.document_registry import (
-    save_document_record,
     load_registry,
     delete_document_record,
     delete_client_registry,
 )
-
-from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
+from app.document_management.client_registry import (
+    CREATE_NEW_CLIENT_OPTION,
+    collection_name_for_client,
+    discover_clients,
+    resolve_active_client_name,
+)
+from app.indexing.document_indexer import index_document_batch
+from app.vector_store.vector_store import VectorStore
 
 st.set_page_config(page_title="CRC Document Intelligence Copilot", layout="wide")
 
@@ -214,6 +210,12 @@ def is_aggregation_question(question: str) -> bool:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+if "active_client_name" not in st.session_state:
+    st.session_state.active_client_name = None
+
+if "new_client_name_input" not in st.session_state:
+    st.session_state.new_client_name_input = ""
+
 # --- Sidebar: Client / KB State ---
 if LOGO_PATH:
     st.sidebar.image(str(LOGO_PATH), width=68)
@@ -223,20 +225,83 @@ st.sidebar.caption("Governance-Aware Document Intelligence")
 st.sidebar.divider()
 st.sidebar.header("Client Knowledge Base")
 
-client_name = st.sidebar.text_input("Client Name", value=DEFAULT_CLIENT_NAME)
-client_name_clean = client_name.strip()
-collection_name = f"client_{client_name_clean}"
+discovered_clients = discover_clients(persist_dir)
+client_selector_options = discovered_clients + [CREATE_NEW_CLIENT_OPTION]
 
-registry = load_registry(
-    persist_dir=persist_dir,
-    client_name=client_name_clean,
+if not client_selector_options:
+    client_selector_options = [CREATE_NEW_CLIENT_OPTION]
+
+if "client_selector" not in st.session_state:
+    if DEFAULT_CLIENT_NAME in discovered_clients:
+        st.session_state.client_selector = DEFAULT_CLIENT_NAME
+    elif discovered_clients:
+        st.session_state.client_selector = discovered_clients[0]
+    else:
+        st.session_state.client_selector = CREATE_NEW_CLIENT_OPTION
+
+if st.session_state.client_selector not in client_selector_options:
+    if DEFAULT_CLIENT_NAME in client_selector_options:
+        st.session_state.client_selector = DEFAULT_CLIENT_NAME
+    else:
+        st.session_state.client_selector = client_selector_options[0]
+
+selected_client_option = st.sidebar.selectbox(
+    "Select Client",
+    options=client_selector_options,
+    key="client_selector",
+)
+
+if selected_client_option == CREATE_NEW_CLIENT_OPTION:
+    new_client_name_input = st.sidebar.text_input(
+        "New client name",
+        value=st.session_state.new_client_name_input,
+        placeholder="Enter a new client name",
+        help='Cannot contain \\ / : * ? " < > |',
+    )
+    st.session_state.new_client_name_input = new_client_name_input
+else:
+    new_client_name_input = ""
+
+client_name_clean, client_name_error = resolve_active_client_name(
+    selected_client_option,
+    new_client_name_input,
+    discovered_clients,
+)
+
+if client_name_error and selected_client_option == CREATE_NEW_CLIENT_OPTION:
+    st.sidebar.warning(client_name_error)
+
+if (
+    client_name_clean
+    and st.session_state.active_client_name is not None
+    and client_name_clean != st.session_state.active_client_name
+):
+    st.session_state.chat_history = []
+    st.session_state.client_just_changed = True
+
+st.session_state.active_client_name = client_name_clean
+
+collection_name = (
+    collection_name_for_client(client_name_clean)
+    if client_name_clean
+    else None
+)
+
+registry = (
+    load_registry(persist_dir=persist_dir, client_name=client_name_clean)
+    if client_name_clean
+    else {"client_name": "", "documents": {}}
 )
 
 registry_documents = registry.get("documents", {})
 
-diagnostics_by_document = load_diagnostics(
-    persist_dir=persist_dir,
-    client_name=client_name_clean,
+diagnostics_by_document = (
+    load_diagnostics(
+        persist_dir=persist_dir,
+        client_name=client_name_clean,
+    )
+    if client_name_clean
+    else {}
 )
 
 # --- Knowledge Base Summary ---
@@ -276,6 +341,12 @@ uploaded_files = st.sidebar.file_uploader(
     type=["txt", "pdf", "docx"],
     accept_multiple_files=True,
 )
+
+if st.session_state.pop("client_just_changed", False) and uploaded_files and client_name_clean:
+    st.sidebar.warning(
+        f"Client changed to '{client_name_clean}'. "
+        "Uploaded files will index into this client unless you re-upload them."
+    )
 
 advanced_indexing_controls = st.sidebar.checkbox(
     "Show document processing settings",
@@ -351,7 +422,13 @@ else:
         "settings to customise segmentation strategy, segment size, overlap, or delimiter."
     )
 
-index_btn = st.sidebar.button("Index Document")
+uploaded_file_count = len(uploaded_files) if uploaded_files else 0
+if uploaded_file_count <= 1:
+    index_button_label = "Index Document"
+else:
+    index_button_label = f"Index {uploaded_file_count} Documents"
+
+index_btn = st.sidebar.button(index_button_label)
 
 replace_existing_index = st.sidebar.checkbox(
     "Replace existing client index before indexing",
@@ -468,294 +545,216 @@ if registry_documents:
                 f"Delete Document: {file_name}",
                 key=f"delete_document_{file_name}",
             ):
-                try:
-                    vector_store = VectorStore(
-                        persist_dir=persist_dir,
-                        collection_name=collection_name,
-                    )
+                if not client_name_clean or not collection_name:
+                    st.sidebar.error("Please select a client before deleting documents.")
+                else:
+                    try:
+                        vector_store = VectorStore(
+                            persist_dir=persist_dir,
+                            collection_name=collection_name,
+                        )
 
-                    deleted_count = vector_store.delete_document(file_name)
+                        deleted_count = vector_store.delete_document(file_name)
 
-                    delete_document_diagnostics(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                        file_name=file_name,
-                    )
+                        delete_document_diagnostics(
+                            persist_dir=persist_dir,
+                            client_name=client_name_clean,
+                            file_name=file_name,
+                        )
 
-                    delete_document_record(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                        file_name=file_name,
-                    )
+                        delete_document_record(
+                            persist_dir=persist_dir,
+                            client_name=client_name_clean,
+                            file_name=file_name,
+                        )
 
-                    st.sidebar.success(
-                        f"Deleted '{file_name}' and {deleted_count} vector chunk(s)."
-                    )
+                        vector_store.release_persisted_client()
 
-                    st.rerun()
+                        st.sidebar.success(
+                            f"Deleted '{file_name}' and {deleted_count} vector chunk(s)."
+                        )
 
-                except Exception as e:
-                    st.sidebar.error(f"Failed to delete document: {e}")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.sidebar.error(f"Failed to delete document: {e}")
 
 else:
     st.sidebar.info("No indexed documents.")
 
 # --- Clear Index Logic ---
 if clear_btn:
-    try:
-        vector_store = VectorStore(
-            persist_dir=persist_dir,
-            collection_name=collection_name,
-        )
-
-        vector_store.delete_collection()
-
-        delete_client_diagnostics(
-            persist_dir=persist_dir,
-            client_name=client_name_clean,
-        )
-
-        delete_client_registry(
-            persist_dir=persist_dir,
-            client_name=client_name_clean,
-        )
-
-        st.sidebar.success(f"Cleared index for client '{client_name_clean}'.")
-        st.rerun()
-
-    except Exception as e:
-        st.sidebar.error(f"Failed to clear index: {e}")
-
-# --- Indexing Logic ---
-if index_btn:
-    if not client_name_clean:
-        index_status.error("Please enter a client name.")
-    elif not uploaded_files:
-        index_status.error("Please upload one or more documents to index.")
+    if not client_name_clean or not collection_name:
+        st.sidebar.error("Please select a client before clearing its index.")
     else:
-        tmp_paths = []
-
         try:
             vector_store = VectorStore(
                 persist_dir=persist_dir,
                 collection_name=collection_name,
             )
 
-            existing_documents = vector_store.list_documents()
+            vector_store.delete_collection()
 
-            existing_file_names = {
-                doc["file_name"]
-                for doc in existing_documents
-            }
+            delete_client_diagnostics(
+                persist_dir=persist_dir,
+                client_name=client_name_clean,
+            )
 
-            if replace_existing_index:
-                try:
-                    vector_store.delete_collection()
+            delete_client_registry(
+                persist_dir=persist_dir,
+                client_name=client_name_clean,
+            )
 
-                    delete_client_diagnostics(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                    )
+            vector_store.release_persisted_client()
 
-                    delete_client_registry(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                    )
+            st.sidebar.success(f"Cleared index for client '{client_name_clean}'.")
+            st.rerun()
 
-                    vector_store = VectorStore(
-                        persist_dir=persist_dir,
-                        collection_name=collection_name,
-                    )
+        except Exception as e:
+            st.sidebar.error(f"Failed to clear index: {e}")
 
-                    existing_file_names = set()
+# --- Indexing Logic ---
+if index_btn:
+    if not client_name_clean:
+        if selected_client_option == CREATE_NEW_CLIENT_OPTION:
+            index_status.error(client_name_error or "Please enter a valid new client name.")
+        else:
+            index_status.error("Please select a client knowledge base.")
+    elif not uploaded_files:
+        index_status.error("Please upload one or more documents to index.")
+    else:
+        tmp_paths: list[str] = []
+        progress_bar = st.sidebar.progress(0)
+        progress_status = st.sidebar.empty()
 
-                    index_status.info("Existing client index cleared before indexing.")
+        def _update_progress(current: int, total: int, file_name: str) -> None:
+            progress_status.info(f"Indexing document {current} of {total}: {file_name}")
+            progress_bar.progress(current / total)
 
-                except Exception:
-                    index_status.info("No existing client index found to clear.")
-
-            all_records = []
-            document_records = []
-            total_chunks = 0
+        try:
+            file_items: list[tuple[str, str]] = []
 
             for uploaded_file in uploaded_files:
-                if uploaded_file.name in existing_file_names:
-                    deleted_count = vector_store.delete_document(uploaded_file.name)
-
-                    delete_document_diagnostics(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                        file_name=uploaded_file.name,
-                    )
-
-                    delete_document_record(
-                        persist_dir=persist_dir,
-                        client_name=client_name_clean,
-                        file_name=uploaded_file.name,
-                    )
-
-                    index_status.info(
-                        f"Removed existing indexed version of "
-                        f"'{uploaded_file.name}' "
-                        f"({deleted_count} chunks) before re-indexing."
-                    )
-
-                index_status.info(f"Processing document: {uploaded_file.name}")
-
                 file_extension = os.path.splitext(uploaded_file.name)[1]
-
                 with tempfile.NamedTemporaryFile(
                     delete=False,
                     suffix=file_extension,
                     mode="wb",
                 ) as tmp_file:
-                    tmp_file.write(uploaded_file.read())
+                    tmp_file.write(uploaded_file.getvalue())
                     tmp_path = tmp_file.name
                     tmp_paths.append(tmp_path)
+                    file_items.append((tmp_path, uploaded_file.name))
 
-                doc = ingest_document(tmp_path)
-                doc.metadata["file_name"] = uploaded_file.name
-                doc.metadata["original_file_name"] = uploaded_file.name
-
-                if chunking_strategy == "character":
-                    chunks = chunk_document(
-                        doc,
-                        chunk_size=chunk_size,
-                        overlap=chunk_overlap,
-                    )
-
-                elif chunking_strategy == "delimiter":
-                    chunks = chunk_document_by_delimiter(
-                        doc,
-                        delimiter=delimiter,
-                    )
-
-                elif chunking_strategy == "page":
-                    chunks = chunk_document_by_page(doc)
-
-                elif chunking_strategy == "heading":
-                    chunks = chunk_document_by_heading(doc)
-
-                else:
-                    raise ValueError(f"Unknown chunking strategy: {chunking_strategy}")
-
-                if not chunks:
-                    raise RuntimeError(
-                        f"No chunks created from document: {uploaded_file.name}"
-                    )
-
-                diagnostics = run_ingestion_diagnostics(doc, chunks)
-
-                save_document_diagnostics(
-                    persist_dir=persist_dir,
-                    client_name=client_name_clean,
-                    file_name=uploaded_file.name,
-                    diagnostics=diagnostics,
-                )
-
-                with st.expander(
-                    f"Document readiness: {diagnostics.file_name}",
-                    expanded=False,
-                ):
-                    st.write("**Readiness status:**", diagnostics.readiness_status)
-                    st.write("**Readiness score:**", f"{diagnostics.readiness_score}/100")
-
-                    st.write(
-                        "**Recommended chunking strategy:**",
-                        diagnostics.recommended_chunking_strategy,
-                    )
-
-                    st.write(
-                        "**Recommendation reason:**",
-                        diagnostics.recommendation_reason,
-                    )
-
-                    st.write("**File type:**", diagnostics.file_type)
-                    st.write("**File size:**", f"{diagnostics.file_size:,} bytes")
-                    st.write(
-                        "**Characters extracted:**",
-                        f"{diagnostics.character_count:,} characters",
-                    )
-                    st.write(
-                        "**Words extracted:**",
-                        f"{diagnostics.word_count:,} words",
-                    )
-
-                    if diagnostics.page_count is not None:
-                        st.write(
-                            "**Pages extracted:**",
-                            f"{diagnostics.page_count:,} pages",
-                        )
-
-                    st.write(
-                        "**Chunks created:**",
-                        f"{diagnostics.chunk_count:,} chunks",
-                    )
-                    st.write(
-                        "**Average chunk length:**",
-                        f"{diagnostics.average_chunk_length:,.1f} characters per chunk",
-                    )
-
-                    if diagnostics.warnings:
-                        st.warning("Review suggested:")
-                        for warning in diagnostics.warnings:
-                            st.write(f"- {warning}")
-                    else:
-                        st.success("No major ingestion issues detected.")
-
-                total_chunks += len(chunks)
-
-                chunk_texts = [chunk.text for chunk in chunks]
-
-                all_records = []
-                document_records = []
-                total_chunks = 0
-                embedding_client = EmbeddingClient()
-
-                embeddings = embedding_client.embed_texts(chunk_texts)
-
-                if len(embeddings) != len(chunks):
-                    raise RuntimeError(
-                        f"Number of embeddings does not match number of chunks for {uploaded_file.name}."
-                    )
-
-                records = [
-                    VectorRecord(chunk=chunk, embedding=embedding)
-                    for chunk, embedding in zip(chunks, embeddings)
-                ]
-
-                all_records.extend(records)
-
-                document_records.append(
-                    {
-                        "file_name": uploaded_file.name,
-                        "file_type": doc.file_type,
-                        "chunk_count": len(chunks),
-                        "chunking_strategy": chunking_strategy,
-                        "readiness_status": diagnostics.readiness_status,
-                        "readiness_score": diagnostics.readiness_score,
-                        "indexed_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
-
-            if not all_records:
-                raise RuntimeError("No records were created from uploaded documents.")
-
-            vector_store.upsert_records(all_records)
-
-            for record in document_records:
-                save_document_record(
-                    persist_dir=persist_dir,
-                    client_name=client_name_clean,
-                    record=record,
-                )
-
-            index_status.success(
-                f"Successfully indexed {len(uploaded_files)} document(s), "
-                f"{total_chunks} chunks, for client '{client_name_clean}'."
+            batch_result = index_document_batch(
+                persist_dir=persist_dir,
+                client_name=client_name_clean,
+                collection_name=collection_name,
+                file_items=file_items,
+                chunking_strategy=chunking_strategy,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                delimiter=delimiter,
+                replace_existing_index=replace_existing_index,
+                progress_callback=_update_progress,
             )
 
-            st.rerun()
+            progress_bar.progress(1.0)
+            progress_status.empty()
+
+            successful = batch_result.successful_results
+            failed = batch_result.failed_results
+
+            if successful:
+                with st.container(border=True):
+                    st.subheader("Document readiness")
+                    for result in successful:
+                        diagnostics = result.diagnostics
+                        if diagnostics is None:
+                            continue
+                        with st.expander(
+                            f"Document readiness: {diagnostics.file_name}",
+                            expanded=False,
+                        ):
+                            st.write("**Readiness status:**", diagnostics.readiness_status)
+                            st.write(
+                                "**Readiness score:**",
+                                f"{diagnostics.readiness_score}/100",
+                            )
+                            st.write(
+                                "**Recommended chunking strategy:**",
+                                diagnostics.recommended_chunking_strategy,
+                            )
+                            st.write(
+                                "**Recommendation reason:**",
+                                diagnostics.recommendation_reason,
+                            )
+                            st.write("**File type:**", diagnostics.file_type)
+                            st.write("**File size:**", f"{diagnostics.file_size:,} bytes")
+                            st.write(
+                                "**Characters extracted:**",
+                                f"{diagnostics.character_count:,} characters",
+                            )
+                            st.write(
+                                "**Words extracted:**",
+                                f"{diagnostics.word_count:,} words",
+                            )
+                            if diagnostics.page_count is not None:
+                                st.write(
+                                    "**Pages extracted:**",
+                                    f"{diagnostics.page_count:,} pages",
+                                )
+                            st.write(
+                                "**Chunks created:**",
+                                f"{diagnostics.chunk_count:,} chunks",
+                            )
+                            st.write(
+                                "**Average chunk length:**",
+                                f"{diagnostics.average_chunk_length:,.1f} characters per chunk",
+                            )
+                            if diagnostics.warnings:
+                                st.warning("Review suggested:")
+                                for warning in diagnostics.warnings:
+                                    st.write(f"- {warning}")
+                            else:
+                                st.success("No major ingestion issues detected.")
+
+            summary_lines = [
+                "Indexing complete",
+                "",
+                f"Successful: {len(successful)}",
+                f"Failed: {len(failed)}",
+                f"Total chunks created: {batch_result.total_chunks}",
+                "",
+            ]
+
+            for result in batch_result.results:
+                if result.success:
+                    summary_lines.append(
+                        f"✓ {result.file_name} — {result.chunk_count} chunks"
+                    )
+                else:
+                    summary_lines.append(
+                        f"✗ {result.file_name} — {result.error_message}"
+                    )
+
+            if failed and not successful:
+                index_status.error("\n\n".join(summary_lines))
+            elif failed:
+                index_status.warning("\n\n".join(summary_lines))
+            else:
+                index_status.success("\n\n".join(summary_lines))
+
+            if (
+                selected_client_option == CREATE_NEW_CLIENT_OPTION
+                and successful
+                and client_name_clean
+            ):
+                st.session_state.client_selector = client_name_clean
+                st.session_state.new_client_name_input = ""
+
+            if successful:
+                st.rerun()
 
         except Exception as e:
             index_status.error(f"Indexing failed: {e}")
@@ -819,7 +818,7 @@ if ask_btn:
     st.write("---")
 
     if not client_name_clean:
-        qa_status.error("Please enter a client name in the sidebar before asking a question.")
+        qa_status.error("Please select a client knowledge base in the sidebar before asking a question.")
     elif not question.strip():
         qa_status.error("Please enter a question to ask.")
     else:
