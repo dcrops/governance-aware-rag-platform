@@ -49,6 +49,16 @@ class RAGPipeline:
 
         return pruned_results[:max_generation_chunks]
 
+    def _chat_observation_fields(self) -> dict:
+        observation = getattr(self.answer_generator, "last_relevance_observation", None)
+        return {
+            "chat_model": getattr(self.answer_generator, "model_name", None),
+            "relevance_response": getattr(observation, "raw_response", None),
+            "relevance_finish_reason": getattr(observation, "finish_reason", None),
+            "relevance_completion_tokens": getattr(observation, "completion_tokens", None),
+            "relevance_reasoning_tokens": getattr(observation, "reasoning_tokens", None),
+        }
+
     def _calculate_confidence(self, search_results) -> str:
         if not search_results:
             return "NONE"
@@ -113,6 +123,9 @@ class RAGPipeline:
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question must be a non-empty string.")
 
+        if hasattr(self.answer_generator, "last_relevance_observation"):
+            self.answer_generator.last_relevance_observation = None
+
         if not isinstance(top_k, int) or top_k <= 0:
             raise ValueError("top_k must be a positive integer.")
 
@@ -166,6 +179,7 @@ class RAGPipeline:
                 orchestration_reasoning=orchestration_decision.reasoning,
                 clarification_triggered=orchestration_decision.clarification_required,
                 stage_timings=stage_timings,
+                **self._chat_observation_fields(),
             )
 
             return RAGResponse(
@@ -258,6 +272,7 @@ class RAGPipeline:
                 orchestration_reasoning=orchestration_decision.reasoning,
                 clarification_triggered=orchestration_decision.clarification_required,
                 stage_timings=stage_timings,
+                **self._chat_observation_fields(),
             )
 
             return RAGResponse(
@@ -338,6 +353,7 @@ class RAGPipeline:
             orchestration_reasoning=orchestration_decision.reasoning,
             clarification_triggered=orchestration_decision.clarification_required,
             stage_timings=stage_timings,
+            **self._chat_observation_fields(),
         )
 
         return RAGResponse(

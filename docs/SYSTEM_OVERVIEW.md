@@ -324,6 +324,67 @@ Stored benchmark metadata:
 - retrieval metrics
 - answer status metrics
 
+## Offline regression baseline — 25 November 2026
+
+Recorded before the controlled `gpt-4.1-mini` and `gpt-6-luna` comparison. Interpreter: the `ai311` environment, Python 3.11.14. Command: `python -m pytest tests/test_client_registry.py`.
+
+- Passed: 9
+- Failed: 0
+- Skipped: 0
+- Additional tests requiring external APIs were not executed: 8
+  - `tests/test_batch_indexing.py`: 5
+  - `tests/test_cross_process_retrieval.py`: 3
+- Offline pytest execution time: 1.85 seconds
+- `scripts/test_intent_classifier.py` smoke check passed
+
+This offline suite covers client discovery, name validation, registry isolation, and an empty local collection. It does not establish generation, grounding, citation, or rewriting correctness.
+
+## Controlled comparison — 25 November 2026
+
+One execution of six synthetic scenarios was run for `gpt-4.1-mini` and `gpt-6-luna`. The detailed record is `logs/evaluation_runs/model_comparison_20261125.json`.
+
+- 22 successful chat calls.
+- 11 calls per model.
+- Zero API errors.
+- Zero retries.
+- Zero empty or truncated responses.
+- Zero reasoning tokens.
+- GPT-4.1 Mini: 2,277 prompt tokens, 155 completion tokens, 12.8 seconds combined latency.
+- GPT-6 Luna: 2,266 prompt tokens, 138 completion tokens, 10.2 seconds combined latency.
+
+Each scenario ran once per model. These figures describe that single execution. They do not establish a statistical performance improvement.
+
+Luna requests used `reasoning_effort` `none`, `max_completion_tokens` at the existing budgets of 5, 512, 80 and 64, and omitted temperature, `top_p` and `stop`. The baseline model kept its existing parameters. On the contextual follow-up, Luna joined the policy’s “authorised personnel” rule and the FAQ’s payroll, HR and finance rule with “this includes”. The FAQ does not define the policy term. Grounding still returned `PASS`.
+
+## Production validation — 25 November 2026
+
+The migrated production classes were exercised once on the same synthetic index. The record is `logs/evaluation_runs/migration_validation_20261125.json`.
+
+- Default model resolved to `gpt-6-luna`, and all 21 chat responses returned that id.
+- 21 chat calls and 1 query-embedding call, matching the plan. No retries and no API errors.
+- Supported relevance returned exact `YES` on all 5 calls. Unsupported relevance returned exact `NO` on all 5 calls. Each used 4 completion tokens, finished with `stop`, and reported 0 reasoning tokens.
+- The standard, comparison, aggregation, contextual rewrite, and evaluation rewrite scenarios succeeded.
+- The additional cross-document question, supplied with both access rules, answered with the FAQ rule and did not repeat the earlier “this includes” bridge. It also did not restate the policy’s broader wording.
+- Scenario answers were still a single execution. The five relevance repeats do not establish general answer-quality statistics.
+
+## Chat model configuration
+
+`RAG_CHAT_MODEL` selects the operational chat model. When it is unset, the default is `gpt-6-luna`. Set `RAG_CHAT_MODEL=gpt-4.1-mini` to keep the previous parameter profile. An explicit constructor argument overrides the environment variable.
+
+The Luna profile applies only to the exact model id `gpt-6-luna`. `gpt-4.1-mini` and any other explicit model keep the historical `max_tokens` and sampling arguments. The embedding model remains `text-embedding-3-small`.
+
+## Existing architectural limitations
+
+These behaviours were left unchanged by the model migration:
+
+- Relevance accepts any response whose text starts with `YES`.
+- An empty answer is labelled `ANSWERED` unless it contains the refusal sentence.
+- Grounding `PASS` records that relevance returned `YES` and an answer was generated. It does not check each claim.
+- Citations are the retrieved chunks, including chunks returned with a refusal.
+- Refusal status depends on the answer containing “don't have enough information”.
+- A follow-up whose original wording matches the clarification list is not retrieved, including when a standalone rewrite was produced.
+- The historical topic-match metric searches the answer and the retrieved chunk text together.
+
 ---
 
 # Synthetic Evaluation Corpus

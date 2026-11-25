@@ -1,8 +1,34 @@
+from dataclasses import dataclass
 from typing import List
 from openai import OpenAI
 
+from app.config import apply_chat_model_params, resolve_chat_model
 from app.vector_store.vector_store import SearchResult
 from app.orchestration.domain_profiles import get_domain_profile
+
+
+@dataclass
+class RelevanceObservation:
+    """Telemetry for the relevance call. It does not include the prompt or context."""
+
+    model: str | None
+    raw_response: str | None
+    finish_reason: str | None
+    completion_tokens: int | None
+    reasoning_tokens: int | None
+
+
+def _completion_usage(response) -> tuple[int | None, int | None]:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None, None
+
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    details = getattr(usage, "completion_tokens_details", None)
+    reasoning_tokens = None
+    if details is not None and hasattr(details, "reasoning_tokens"):
+        reasoning_tokens = details.reasoning_tokens
+    return completion_tokens, reasoning_tokens
 
 
 class AnswerGenerator:
@@ -10,9 +36,10 @@ class AnswerGenerator:
     Generates answers grounded in retrieved document context using an OpenAI chat model.
     """
 
-    def __init__(self, model_name: str = "gpt-4.1-mini"):
-        self.client = OpenAI()
-        self.model_name = model_name
+    def __init__(self, model_name: str | None = None, client=None):
+        self.client = client or OpenAI()
+        self.model_name = resolve_chat_model(model_name)
+        self.last_relevance_observation: RelevanceObservation | None = None
 
     def validate_context_relevance(
         self,
@@ -62,15 +89,30 @@ class AnswerGenerator:
             )
 
         response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {"role": "user", "content": validation_prompt}
-            ],
-            temperature=0,
-            max_tokens=5,
+            **apply_chat_model_params(
+                self.model_name,
+                {
+                    "messages": [
+                        {"role": "user", "content": validation_prompt}
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 5,
+                },
+            )
         )
 
-        response_text = response.choices[0].message.content.strip()
+        choice = response.choices[0]
+        raw_content = choice.message.content
+        completion_tokens, reasoning_tokens = _completion_usage(response)
+        self.last_relevance_observation = RelevanceObservation(
+            model=self.model_name,
+            raw_response=raw_content if isinstance(raw_content, str) else None,
+            finish_reason=choice.finish_reason,
+            completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+
+        response_text = raw_content.strip()
 
         verdict = response_text.upper()
 
@@ -83,6 +125,8 @@ class AnswerGenerator:
         answer_mode: str = "standard",
         domain_profile: str | None = None,
     ) -> tuple[str, str]:
+        self.last_relevance_observation = None
+
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question must be a non-empty string.")
 
@@ -159,14 +203,18 @@ class AnswerGenerator:
 
         try:
             response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=512,
-                n=1,
+                **apply_chat_model_params(
+                    self.model_name,
+                    {
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.2,
+                        "max_tokens": 512,
+                        "n": 1,
+                    },
+                )
             )
 
             answer = response.choices[0].message.content.strip()

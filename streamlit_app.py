@@ -2,7 +2,6 @@ import os
 import tempfile
 import requests
 from pathlib import Path
-from openai import OpenAI
 
 import streamlit as st
 
@@ -15,6 +14,7 @@ truststore.inject_into_ssl()
 load_dotenv()
 
 from app.config import PERSIST_DIR, DEFAULT_CLIENT_NAME, DEFAULT_TOP_K, DEFAULT_MIN_SCORE
+from app.query_processing.contextual_rewriter import rewrite_contextual_question
 from app.ingestion.diagnostics_store import (
     load_diagnostics,
     delete_document_diagnostics,
@@ -37,8 +37,6 @@ from app.vector_store.vector_store import VectorStore
 st.set_page_config(page_title="CRC Document Intelligence Copilot", layout="wide")
 
 persist_dir = PERSIST_DIR
-
-rewrite_client = OpenAI()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
@@ -108,50 +106,7 @@ st.markdown(
 )
 
 def build_contextual_question(question: str, chat_history: list[dict]) -> str:
-    if not chat_history:
-        return question
-
-    recent_history = chat_history[-3:]
-
-    context_lines = []
-
-    for turn in recent_history:
-        context_lines.append(f"Previous question: {turn.get('question', '')}")
-        context_lines.append(f"Previous answer: {turn.get('answer', '')}")
-
-    conversation_context = "\n".join(context_lines)
-
-    prompt = f"""
-You rewrite follow-up questions into standalone questions for a RAG system.
-
-Use the recent conversation only to resolve references such as:
-it, that, this, he, she, they, the event, the date, the person.
-
-Do not answer the question.
-Return only the rewritten standalone question.
-
-Recent conversation:
-{conversation_context}
-
-Current question:
-{question}
-
-Standalone question:
-"""
-
-    response = rewrite_client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        temperature=0,
-        max_tokens=80,
-    )
-
-    return response.choices[0].message.content.strip()
+    return rewrite_contextual_question(question, chat_history)
 
 def get_effective_top_k(
     question: str,

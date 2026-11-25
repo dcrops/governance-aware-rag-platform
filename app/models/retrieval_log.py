@@ -30,6 +30,12 @@ class RetrievalLog(BaseModel):
 
     grounding_check: str | None = None  #   PASS, FAIL, SKIPPED
 
+    chat_model: str | None = None
+    relevance_response: str | None = None
+    relevance_finish_reason: str | None = None
+    relevance_completion_tokens: int | None = None
+    relevance_reasoning_tokens: int | None = None
+
     orchestration_intent: str | None = None
     retrieval_strategy: str | None = None
     orchestration_reasoning: str | None = None
